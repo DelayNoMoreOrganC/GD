@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""字段后处理：案号、法院文书列表等"""
+
+import re
+
+# 中文案号：（年份）或 (年份) + 法院字号 + 类型 + 序号 + 号
+CASE_NO_RE = re.compile(r"[（(]\d{4}[）)][^、，,；;\n\r]{2,48}?号")
+
+# 模板占位符后附带的示例说明（档案卷宗等）
+REFERENCE_FORMAT_TRAILING = re.compile(r"参考格式[：:\s].*$", re.DOTALL)
+
+# 提示词中的范例案号（若原样填入则丢弃，改从 PDF 文本提取）
+PROMPT_EXAMPLE_MARKERS = ("18549", "15469", "7816", "参考格式", "格式：", "格式:")
+
+# 档案卷宗「法院收案号」仅允许：判决书诉讼案号 + 执行裁定书执行案号
+LITIGATION_MARKERS = ("民初", "民终", "民再")
+EXECUTION_EXCLUDE = ("执保", "执异", "执复", "执监", "执协", "民函", "仲")
+
+
+def extract_case_numbers_from_text(text: str) -> list:
+    if not text:
+        return []
+    found = CASE_NO_RE.findall(text)
+    out = []
+    seen = set()
+    for n in found:
+        n = n.strip()
+        if n and n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def _normalize_case_no_parens(s: str) -> str:
+    return (s or "").replace("(", "（").replace(")", "）")
+
+
+def _classify_archive_case_no(case_no: str):
+    """
+    档案卷宗法院收案号分类。
+    返回 'litigation' | 'execution' | None（排除）。
+    """
+    n = _normalize_case_no_parens((case_no or "").strip())
+    if not n or len(n) < 8:
+        return None
+    if any(x in n for x in EXECUTION_EXCLUDE):
+        return None
+    if re.search(r"字第\s*号$", n) or "字第号" in n:
+        return None
+    if re.search(r"第\d{5,}号$", n) and "民" not in n and "执" not in n:
+        return None
+
+    if any(m in n for m in LITIGATION_MARKERS):
+        return "litigation"
+
+    # 执行案号：含「执」+ 数字，且非诉讼案号样式
+    if re.search(r"执\s*\d", n) and not any(m in n for m in LITIGATION_MARKERS):
+        return "execution"
+
+    return None
+
+
+def _dedupe_preserve_order(items):
+    seen = set()
+    out = []
+    for x in items:
+        key = _normalize_case_no_parens(x)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(_normalize_case_no_parens(x))
+    return out
+
+
+def _court_code_from_case(case_no: str) -> str:
+    """提取法院地区码，如 粤0604 -> 0604"""
+    m = re.search(r"粤\s*0*(\d{4})", _normalize_case_no_parens(case_no))
+    return m.group(1) if m else ""
+
+
+def _pick_litigation_case_numbers(candidates, pdf_text: str):
+    """多个诉讼案号时：保留民终；民初仅保留本案民事判决书主案号一条"""
+    if not candidates:
+        return []
+    if len(candidates) == 1:
+        return candidates
+
+    pdf = pdf_text or ""
+    ends, others = [], []
+    for n in candidates:
+        norm = _normalize_case_no_parens(n)
+        if "民终" in norm:
+            ends.append(n)
+        else:
+            others.append(n)
+
+    if not others:
+        return _dedupe_preserve_order(ends)
+
+    scored = []
+    for n in others:
+        norm = _normalize_case_no_parens(n)
+        score = 0
+        for title in ("民事判决书", "判决书"):
+            idx = pdf.find(title)
+            if idx >= 0 and norm in pdf[idx : idx + 6000]:
+                score += 30
+                break
+        for bad in ("参与分配", "另案", "查封公告", "拍卖", "分配方案"):
+            idx = pdf.find(bad)
+            if idx >= 0 and norm in pdf[max(0, idx - 120) : idx + 600]:
+                score -= 25
+        ym = re.search(r"[（(](\d{4})[）)]", norm)
+        if ym:
+            y = int(ym.group(1))
+            if y <= 2020:
+                score += 3
+            elif y >= 2021:
+                score -= 8
+        scored.append((score, n))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    primary = [scored[0][1]] if scored else [others[0]]
+    return _dedupe_preserve_order(ends + primary)
+
+
+def _pick_execution_case_numbers(candidates, pdf_text: str, litigation_nums: list):
+    """多个执行案号时，优先与本案判决法院一致、且出自终结/立案执行裁定书段落"""
+    if not candidates:
+        return []
+    if len(candidates) == 1:
+        return candidates
+
+    lit_code = _court_code_from_case(litigation_nums[0]) if litigation_nums else ""
+    scored = []
+    pdf = pdf_text or ""
+
+    for n in candidates:
+        score = 0
+        norm = _normalize_case_no_parens(n)
+        if lit_code and lit_code in norm:
+            score += 10
+        # 终结本次执行 / 立案执行 裁定书中的案号优先
+        for marker, bonus in (
+            ("终结本次执行", 20),
+            ("终结执行", 18),
+            ("恢复执行", 12),
+            ("执行裁定书", 8),
+        ):
+            idx = pdf.find(marker)
+            if idx >= 0 and norm in pdf[max(0, idx - 80) : idx + 1200]:
+                score += bonus
+                break
+        # 财产保全段落降权
+        if "财产保全" in pdf and norm in pdf:
+            idx = pdf.find("财产保全")
+            if idx >= 0 and norm in pdf[max(0, idx - 80) : idx + 800]:
+                score -= 15
+        if "执保" in norm:
+            score -= 50
+        scored.append((score, n))
+
+    scored.sort(key=lambda x: (-x[0], x[1]))
+    best = scored[0][1]
+    return [best] if best else [candidates[0]]
+
+
+def _extract_from_pdf_sections(pdf_text: str):
+    """按文书段落从 PDF 文本提取诉讼案号、执行案号"""
+    if not pdf_text:
+        return [], []
+
+    text = pdf_text.replace("\r", "\n")
+    lit, exe = [], []
+
+    # 民事判决书段落
+    for m in re.finditer(
+        r"(民事判决书|判决书)(.{0,4000}?)(?=执行裁定书|裁定书|财产分配|受理案件|$)",
+        text,
+        re.DOTALL,
+    ):
+        chunk = m.group(0)
+        if "民事裁定" in chunk[:30]:
+            continue
+        for n in extract_case_numbers_from_text(chunk):
+            if _classify_archive_case_no(n) == "litigation":
+                lit.append(n)
+
+    if not lit:
+        head = text[:8000]
+        for n in extract_case_numbers_from_text(head):
+            if _classify_archive_case_no(n) == "litigation":
+                lit.append(n)
+
+    # 执行裁定书（排除财产保全专段）
+    for m in re.finditer(
+        r"(执行裁定书|执行裁定)(.{0,3500}?)(?=执行裁定书|执行裁定|民事判决|财产分配|受理案件|$)",
+        text,
+        re.DOTALL,
+    ):
+        chunk = m.group(0)
+        if "财产保全" in chunk[:400] or "执保" in chunk[:400]:
+            continue
+        for n in extract_case_numbers_from_text(chunk):
+            if _classify_archive_case_no(n) == "execution":
+                exe.append(n)
+
+    if not exe:
+        for m in re.finditer(
+            r"(终结本次执行|终结执行|立案执行)(.{0,2500}?)",
+            text,
+            re.DOTALL,
+        ):
+            for n in extract_case_numbers_from_text(m.group(0)):
+                if _classify_archive_case_no(n) == "execution":
+                    exe.append(n)
+
+    return _dedupe_preserve_order(lit), _dedupe_preserve_order(exe)
+
+
+def filter_archive_case_numbers(numbers, pdf_text: str = ""):
+    """
+    档案卷宗法院收案号：仅保留判决书诉讼案号（民初/民终/民再）+
+    执行裁定书执行案号（不含执保等）。
+    """
+    lit, exe = [], []
+    for n in numbers or []:
+        kind = _classify_archive_case_no(n)
+        if kind == "litigation":
+            lit.append(n)
+        elif kind == "execution":
+            exe.append(n)
+
+    lit = _dedupe_preserve_order(lit)
+    lit = _pick_litigation_case_numbers(lit, pdf_text)
+    exe = _dedupe_preserve_order(exe)
+    exe = _pick_execution_case_numbers(exe, pdf_text, lit)
+
+    return lit + exe
+
+
+def strip_template_reference_suffix(text: str) -> str:
+    """去掉 Word 模板中占位符后的「参考格式：示例案号」等固定说明"""
+    if not text:
+        return text
+    had_cr = "\r" in text
+    s = text.replace("\x07", "")
+    s = REFERENCE_FORMAT_TRAILING.sub("", s)
+    s = re.sub(r"格式[：:\s]*$", "", s)
+    s = s.rstrip()
+    if had_cr and not s.endswith("\r"):
+        s += "\r"
+    return s
+
+
+def sanitize_court_case_no(value: str, pdf_text: str = "") -> str:
+    """
+    档案卷宗等使用的法院收案号：仅判决书诉讼案号 + 执行裁定书执行案号。
+    不从 PDF 全文捞取所有案号，避免另案/保全/律所函号等误入。
+    """
+    raw = strip_template_reference_suffix((value or "").strip())
+    raw = re.sub(r"^参考格式[：:\s]*", "", raw)
+    raw = re.sub(r"^格式[：:\s]*", "", raw)
+
+    from_value = extract_case_numbers_from_text(raw)
+    looks_like_prompt_example = any(m in (value or "") for m in PROMPT_EXAMPLE_MARKERS)
+
+    if looks_like_prompt_example:
+        from_value = []
+
+    filtered = filter_archive_case_numbers(from_value, pdf_text)
+
+    if not filtered and pdf_text:
+        lit, exe = _extract_from_pdf_sections(pdf_text)
+        lit = _pick_litigation_case_numbers(lit, pdf_text)
+        exe = _pick_execution_case_numbers(exe, pdf_text, lit)
+        filtered = lit + exe
+
+    return "、".join(filtered)
+
+
+def sanitize_field_value(value) -> str:
+    """去掉 LLM 返回值中的【】占位符残留、参考格式说明、零宽字符"""
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if not s:
+        return ""
+    s = re.sub(r"【[^】]*】", "", s)
+    s = re.sub(r"参考格式[：:\s][^\n\r]*", "", s)
+    s = re.sub(r"^格式[：:\s]*", "", s)
+    s = re.sub(r"[\u200b-\u200d\ufeff]", "", s)
+    return s.strip()
+
+
+def sanitize_all_field_values(fields: dict) -> dict:
+    if not fields:
+        return fields
+    out = {}
+    for k, v in fields.items():
+        if isinstance(v, str):
+            out[k] = sanitize_field_value(v)
+        elif isinstance(v, (list, tuple)):
+            out[k] = [sanitize_field_value(x) for x in v if str(x).strip()]
+        else:
+            out[k] = v
+    return out
+
+
+def parse_court_document_list(text: str) -> list:
+    """
+    将法院文件清单拆成不重复的单项文书名称（用于送达材料清单逐行填写）。
+    """
+    if not text:
+        return []
+    s = (text or "").strip()
+    s = re.sub(r"^参考[^：:]*[：:\s]*", "", s)
+    s = re.sub(r"页码识别|可以的话", "", s)
+
+    parts = re.split(r"[、，,;；\n\r]+", s)
+    out = []
+    seen = set()
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        p = re.sub(r"\s*\d+\s*页\s*$", "", p).strip()
+        p = re.sub(r"^[\d\.、\s]+", "", p).strip()
+        if len(p) < 2:
+            continue
+        if p in seen:
+            continue
+        seen.add(p)
+        out.append(p)
+    return out

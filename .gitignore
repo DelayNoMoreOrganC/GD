@@ -1,0 +1,32 @@
+# 敏感配置（只提交 example）
+config.json
+config.target-pc.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 构建产物
+build/
+dist/
+
+# 本地输出与临时文件
+outputs/
+uploads/
+*.log
+
+# 大文件 / 安装包 / 压缩包
+tesseract-installer.exe
+*.7z
+*.zip
+
+# Word 临时锁文件
+~$*
+
+# IDE / 本地
+.claude/
+.vscode/
+.idea/
