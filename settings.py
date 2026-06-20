@@ -84,10 +84,64 @@ def get_ocr_engine(config=None) -> str:
     return "baidu"
 
 
+def get_page_ocr_engine(config=None) -> str:
+    """V4: 获取页级 OCR 引擎配置"""
+    cfg = config or load_config()
+    eng = (cfg.get("ocr") or {}).get("page_engine", "").strip().lower()
+    if eng in ("rapidocr", "paddle", "tesseract", "reuse"):
+        return eng
+    return "rapidocr"  # 默认
+
+
+def get_archive_order_mode(config=None) -> str:
+    """V4: 完整归档正文排序模式。
+
+    - ``catalog``（默认）：按标准案卷目录序号重排正文。
+    - ``original``：保持源 PDF 原始页序输出正文（卷首/卷末系统模板与卷内目录照旧）。
+    """
+    cfg = config or load_config()
+    mode = (cfg.get("archive") or {}).get("order_mode", "").strip().lower()
+    if mode in ("catalog", "original"):
+        return mode
+    return "catalog"  # 默认
+
+
+_PLACEHOLDER_MARKERS = ("在此填写", "YOUR_", "你的 ", "请填写", "填写 DeepSeek", "填写百度")
+
+
+def is_valid_api_key(key) -> bool:
+    """HTTP Authorization 仅支持 latin-1；占位中文会被误判为已配置。"""
+    key = (key or "").strip()
+    if not key:
+        return False
+    try:
+        key.encode("latin-1")
+    except UnicodeEncodeError:
+        return False
+    return not any(m in key for m in _PLACEHOLDER_MARKERS)
+
+
+def require_api_key(key, label="API Key") -> str:
+    """校验 API Key 可用于 HTTP 头，否则抛出明确错误。"""
+    key = (key or "").strip()
+    if not key:
+        raise RuntimeError(f"请在 config.json 中配置 {label}")
+    try:
+        key.encode("latin-1")
+    except UnicodeEncodeError:
+        raise RuntimeError(
+            f"{label} 含非 ASCII 字符（多为未替换的中文占位文字），"
+            f"请填入真实的 Key"
+        )
+    if any(m in key for m in _PLACEHOLDER_MARKERS):
+        raise RuntimeError(f"{label} 仍为示例占位文字，请填入真实的 Key")
+    return key
+
+
 def get_deepseek_config():
     c = load_config().get("deepseek", {})
     return {
-        "api_key": c.get("api_key", ""),
+        "api_key": (c.get("api_key") or "").strip(),
         "base_url": c.get("base_url", "https://api.deepseek.com").rstrip("/"),
         "model": c.get("model", "deepseek-v4-flash"),
     }
@@ -104,11 +158,56 @@ def get_baidu_config():
 
 
 def parse_llm_output(text):
+    """解析 LLM 输出为字段字典。
+
+    依次尝试：
+    1. JSON 对象（含 ```json 代码块包裹）→ 直接取键值；
+    2. 逐行「字段名: 值」/「字段名：值」（兼容中英文冒号），仅按首个冒号切分，
+       保留值中后续的冒号（如地址、时间段）。
+    重复键时后者覆盖前者，但保留首个非空值优先。
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return {}
+
+    # 1) JSON 优先：剥离 ```json ... ``` 围栏后尝试解析
+    json_candidate = raw
+    if json_candidate.startswith("```"):
+        import re as _re
+        json_candidate = _re.sub(r"^```[a-zA-Z]*\n?", "", json_candidate)
+        json_candidate = _re.sub(r"\n?```$", "", json_candidate).strip()
+    if json_candidate.startswith("{") and json_candidate.endswith("}"):
+        try:
+            import json as _json
+            obj = _json.loads(json_candidate)
+            if isinstance(obj, dict):
+                return {
+                    str(k).strip(): ("" if v is None else str(v).strip())
+                    for k, v in obj.items()
+                }
+        except (ValueError, TypeError):
+            pass
+
+    # 2) 逐行解析（兼容中文冒号；跳过 markdown 标题/分隔行）
     field_data = {}
-    for line in (text or "").split("\n"):
-        if ":" in line:
-            key, value = line.split(":", 1)
-            field_data[key.strip()] = value.strip()
+    for line in raw.split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", "```", "---")):
+            continue
+        idx_half = stripped.find(":")
+        idx_full = stripped.find("：")
+        candidates = [i for i in (idx_half, idx_full) if i != -1]
+        if not candidates:
+            continue
+        sep = min(candidates)
+        key = stripped[:sep].strip().lstrip("-*").strip()
+        value = stripped[sep + 1:].strip()
+        if not key:
+            continue
+        # 重复键：仅当新值非空且旧值为空时覆盖，否则保留首个
+        if key in field_data and field_data[key] and not value:
+            continue
+        field_data[key] = value
     return field_data
 
 
@@ -117,7 +216,7 @@ def config_is_ready(ocr_engine=None):
     cfg = load_config()
     engine = ocr_engine or get_ocr_engine(cfg)
     ds = get_deepseek_config()
-    if not ds.get("api_key"):
+    if not is_valid_api_key(ds.get("api_key")):
         return False
     if engine == "mineru_api":
         from mineru_api import check_mineru_api_available
@@ -130,15 +229,15 @@ def config_is_ready(ocr_engine=None):
         ok, _ = check_mineru_available(cfg)
         return ok
     bd = get_baidu_config()
-    return bool(bd.get("APP_ID") and bd.get("API_KEY") and bd.get("SECRET_KEY"))
+    return bool(
+        is_valid_api_key(bd.get("APP_ID"))
+        and is_valid_api_key(bd.get("API_KEY"))
+        and is_valid_api_key(bd.get("SECRET_KEY"))
+    )
 
 
 def config_is_ready_v2():
     return config_is_ready(ocr_engine="mineru")
-
-
-def config_is_ready_v1():
-    return config_is_ready(ocr_engine="baidu")
 
 
 def apply_ocr_engine(
@@ -191,7 +290,7 @@ def config_status_message(ocr_engine=None) -> str:
     cfg = load_config()
     engine = ocr_engine or get_ocr_engine(cfg)
     ds = get_deepseek_config()
-    if not ds.get("api_key"):
+    if not is_valid_api_key(ds.get("api_key")):
         return "待配置 DeepSeek API Key"
     if engine == "mineru_api":
         from mineru_api import check_mineru_api_available

@@ -71,6 +71,21 @@ def get_template_paths():
     return paths
 
 
+def get_catalog_template_path(case_type: str) -> str:
+    """五类卷内目录 Word 模板路径（仅填页码）"""
+    try:
+        import archive_catalog as ac
+        fn = ac.get_catalog_template_filename(case_type)
+    except Exception:
+        fn = f"卷内目录_{case_type}.doc"
+    d = get_templates_dir()
+    p = os.path.join(d, fn)
+    if os.path.isfile(p):
+        return p
+    alt = os.path.join(get_app_dir(), "templates", "bundled", fn)
+    return alt if os.path.isfile(alt) else p
+
+
 def get_manifests_dir():
     """单元格映射表：优先 EXE 旁 templates/manifests，否则打包内资源"""
     for base in (get_app_dir(), get_resource_dir()):
@@ -85,14 +100,6 @@ def ensure_app_dirs():
     os.makedirs(get_templates_dir(), exist_ok=True)
 
 
-def get_config_v2_example_path():
-    for base in (get_resource_dir(), get_app_dir()):
-        p = os.path.join(base, "config.json.v2.example")
-        if os.path.exists(p):
-            return p
-    return os.path.join(get_app_dir(), "config.json.v2.example")
-
-
 def init_config_if_missing():
     cfg = get_config_path()
     if os.path.exists(cfg):
@@ -101,15 +108,3 @@ def init_config_if_missing():
     if os.path.exists(ex):
         shutil.copy2(ex, cfg)
     return cfg
-
-
-def init_config_v2_if_missing():
-    """V2：首次运行复制 config.json.v2.example（MinerU + DeepSeek）"""
-    cfg = get_config_path()
-    if os.path.exists(cfg):
-        return cfg
-    ex = get_config_v2_example_path()
-    if os.path.exists(ex):
-        shutil.copy2(ex, cfg)
-        return cfg
-    return init_config_if_missing()
