@@ -31,3 +31,6 @@ tesseract-installer.exe
 .vscode/
 .idea/
 .cursor/hooks/feishu.config.json
+
+# 测试样本（扫描件含真实案件数据 + 1GB+，不入库）
+test_sample/

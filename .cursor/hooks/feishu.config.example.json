@@ -1,0 +1,6 @@
+{
+  "webhook_url": "https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "secret": "",
+  "project_name": "案件归档 GD",
+  "enabled": true
+}

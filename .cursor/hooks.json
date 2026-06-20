@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .cursor/hooks/notify_feishu.ps1 -Event stop"
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .cursor/hooks/notify_feishu.ps1 -Event subagentStop"
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "powershell -NoProfile -ExecutionPolicy Bypass -File .cursor/hooks/notify_feishu.ps1 -Event sessionEnd"
+      }
+    ]
+  }
+}

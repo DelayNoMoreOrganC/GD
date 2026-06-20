@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  unit-tests:
+    # 项目依赖 pywin32（Windows 专用），故在 Windows runner 上运行纯逻辑测试
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pure-logic unit tests
+        run: python -m pytest tests/ -q
+
+      - name: P0 standard catalog parse (no OCR)
+        run: python scripts/extract_standard_catalog.py
+        continue-on-error: false

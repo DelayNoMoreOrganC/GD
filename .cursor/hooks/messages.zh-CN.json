@@ -1,0 +1,8 @@
+{
+  "default_project": "Cursor",
+  "no_task": "(无任务描述)",
+  "test": "[{project}]\n测试消息：飞书通知已连通\n时间：{now}",
+  "stop": "[{project}]\nAgent 本轮结束\n状态：{status}\n时间：{now}",
+  "subagentStop": "[{project}]\n子任务完成\n任务：{task}\n状态：{status}\n耗时：{duration}秒\n时间：{now}",
+  "sessionEnd": "[{project}]\n会话结束\n原因：{reason}\n耗时：{duration}秒\n时间：{now}"
+}
