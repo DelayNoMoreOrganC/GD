@@ -104,10 +104,16 @@ def group_cell_patches(fill_cells, field_patch: dict) -> dict:
     返回 {(ti, row, col): {placeholder: value, ...}}
     """
     grouped = {}
+    # 调试日志
+    debug_template = any("送达材料清单" in str(cell.get("template", "")) for cell in fill_cells) or len(fill_cells) > 50
+
     for cell in fill_cells:
         ph = cell.get("placeholder")
         if not ph:
             continue
+        # 调试日志
+        if debug_template and "律师" in ph:
+            print(f"  [DEBUG group] 处理占位符: {ph}")
         key = (cell["table_index"], cell["row"], cell["col"])
         val = field_patch.get(ph)
         if cell.get("role") == "clear":

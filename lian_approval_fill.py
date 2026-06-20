@@ -66,16 +66,19 @@ def _set_kaiti(rng, size_pt: float = SIZE_SIHAO):
 
 
 def _pick_lian_party(base_fields: dict) -> str:
+    from field_sanitize import parse_litigation_parties
+
+    for key in ("判决书中的原告", "起诉状中的原告", "原告", "当事人"):
+        raw = (base_fields.get(key) or "").strip()
+        if not raw:
+            continue
+        pl, _ = parse_litigation_parties(raw)
+        if pl:
+            return pl
+        if key != "当事人" and raw:
+            return raw
     client = (base_fields.get("委托人") or base_fields.get("委托人名称") or "").strip()
-    plaintiff = (
-        base_fields.get("当事人")
-        or base_fields.get("起诉状中的原告")
-        or base_fields.get("判决书中的原告")
-        or ""
-    ).strip()
-    if client and plaintiff and client != plaintiff:
-        return client
-    return plaintiff or client
+    return client
 
 
 def _pick_defendants(base_fields: dict) -> str:

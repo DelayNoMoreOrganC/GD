@@ -308,6 +308,159 @@ def sanitize_all_field_values(fields: dict) -> dict:
     return out
 
 
+def parse_litigation_parties(text: str) -> tuple[str, str]:
+    """从「原告：A，被告：B」或「A诉B…一案」提取原、被告姓名（不含标签）。"""
+    s = (text or "").strip()
+    if not s:
+        return "", ""
+
+    plaintiff = ""
+    defendant = ""
+
+    m = re.search(r"原告[：:为]?\s*([^，,;；\n]+?)(?=[，,;；\n]|被告|$)", s)
+    if m:
+        plaintiff = m.group(1).strip()
+    m = re.search(r"被告[：:为]?\s*([^，,;；\n]+)", s)
+    if m:
+        defendant = m.group(1).strip()
+
+    if not plaintiff or not defendant:
+        m = re.search(r"(.+?)诉(.+?)(?:一案|纠纷案|案件)", s)
+        if m:
+            if not plaintiff:
+                plaintiff = m.group(1).strip()
+            if not defendant:
+                rest = m.group(2).strip()
+                defendant = re.sub(
+                    r"(借款|买卖|租赁|合同|侵权|劳动|服务|信用卡)?纠纷$",
+                    "",
+                    rest,
+                ).strip() or rest
+
+    for label, val in (("原告", plaintiff), ("被告", defendant)):
+        if val:
+            val = re.sub(rf"^{label}[：:为]?\s*", "", val).strip()
+        if label == "原告":
+            plaintiff = val
+        else:
+            defendant = val
+
+    return plaintiff, defendant
+
+
+def _clean_party_name(name: str) -> str:
+    n = (name or "").strip()
+    n = re.sub(r"^(原告|被告)[：:为]?\s*", "", n)
+    return n.strip()
+
+
+def _normalize_defendant_name(name: str) -> str:
+    """个人被告常带性别/出生信息，只保留姓名或公司名。"""
+    n = _clean_party_name(name)
+    if not n:
+        return n
+    if re.search(r"[，,].*(男|女|出生|身份证|住址)", n):
+        n = re.split(r"[，,]", n, maxsplit=1)[0].strip()
+    if len(n) > 40:
+        m2 = re.match(r"^([^，,;；\d]{2,20})", n)
+        if m2:
+            n = m2.group(1).strip()
+    return n
+
+
+def normalize_plaintiff_lawyer(text: str) -> str:
+    """从「原告律师A、被告律师B」提取本案承办律师（原告侧）。"""
+    s = (text or "").strip()
+    if not s or s in ("无", "待确认", "未知"):
+        return ""
+    m = re.search(r"原告律师[：:]?\s*([^、,，;；\n]+)", s)
+    if m:
+        return m.group(1).strip()
+    if "被告律师" in s:
+        head = s.split("被告律师", 1)[0]
+        head = re.sub(r"^原告律师[：:]?\s*", "", head).strip(" 、，,;；")
+        if head:
+            return head
+    return re.sub(r"^原告律师[：:]?\s*", "", s).strip()
+
+
+def enrich_party_fields(fields: dict) -> dict:
+    """将合并的「当事人」拆成模板各槽位专用字段，避免填错格。"""
+    if not fields:
+        return fields
+    m = dict(fields)
+
+    plaintiff = _clean_party_name(
+        m.get("判决书中的原告") or m.get("起诉状中的原告") or m.get("原告") or ""
+    )
+    defendant = _normalize_defendant_name(
+        m.get("判决书中的被告")
+        or m.get("起诉状中的被告")
+        or m.get("被告")
+        or m.get("对方当事人")
+        or ""
+    )
+
+    for raw in (m.get("当事人"), m.get("案件或项目名称")):
+        if not raw:
+            continue
+        pl, df = parse_litigation_parties(str(raw))
+        if pl and not plaintiff:
+            plaintiff = pl
+        if df and not defendant:
+            defendant = df
+
+    def _bad(v: str) -> bool:
+        return not v or v in ("待确认", "无", "未知", "暂无")
+
+    if _bad(plaintiff) and not _bad(m.get("委托人")):
+        # 信用卡/银行案：判决书原告常为发卡行，与委托人一致
+        plaintiff = _clean_party_name(m.get("委托人", ""))
+    if _bad(defendant):
+        _, df = parse_litigation_parties(str(m.get("当事人") or ""))
+        defendant = _normalize_defendant_name(df or defendant)
+
+    if plaintiff:
+        m["判决书中的原告"] = plaintiff
+        m["起诉状中的原告"] = plaintiff
+        m.setdefault("原告", plaintiff)
+    if defendant:
+        defendant = _normalize_defendant_name(defendant)
+        m["判决书中的被告"] = defendant
+        m["起诉状中的被告"] = defendant
+        m.setdefault("对方当事人", defendant)
+        m.setdefault("被告", defendant)
+
+    client = _clean_party_name(m.get("委托人") or m.get("委托人名称") or "")
+    if client and ("原告" in client or "被告" in client or "，" in client):
+        pl, _ = parse_litigation_parties(client)
+        client = pl or ""
+    if client:
+        m["委托人"] = client
+        m["委托人名称"] = client
+
+    for src in ("判决书上代理律师", "判决书原告的委托诉讼代理人", "代理律师", "承办律师"):
+        v = (m.get(src) or "").strip()
+        if v and v not in ("无", "待确认"):
+            clean = normalize_plaintiff_lawyer(v) or v
+            m["判决书上代理律师"] = clean
+            m["判决书原告的委托诉讼代理人"] = clean
+            m.setdefault("承办律师", clean)
+            break
+
+    # 非关键字段不把「待确认」写入模板
+    _optional = {
+        "合同号", "备注", "传真", "档案号", "保存年限", "归档日期",
+        "立卷人", "卷内页数", "应收业务费", "已收业务费",
+    }
+    for k in list(m.keys()):
+        v = str(m.get(k) or "").strip()
+        if v in ("待确认", "无", "未知", "暂无") and k in _optional:
+            m[k] = ""
+
+    return m
+
+
 def parse_court_document_list(text: str) -> list:
     """
     将法院文件清单拆成不重复的单项文书名称（用于送达材料清单逐行填写）。

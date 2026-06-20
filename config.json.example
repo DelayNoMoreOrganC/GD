@@ -1,16 +1,18 @@
 {
   "ocr": {
-    "engine": "baidu"
+    "engine": "baidu",
+    "page_engine": "rapidocr",
+    "cache": true
   },
   "deepseek": {
-    "api_key": "在此填写 DeepSeek API Key",
+    "api_key": "",
     "base_url": "https://api.deepseek.com",
     "model": "deepseek-v4-flash"
   },
   "baidu_ocr": {
-    "app_id": "在此填写百度 OCR AppID",
-    "api_key": "在此填写百度 OCR API Key",
-    "secret_key": "在此填写百度 OCR Secret Key",
+    "app_id": "",
+    "api_key": "",
+    "secret_key": "",
     "mode": "basic"
   },
   "mineru": {
@@ -38,5 +40,8 @@
   },
   "extraction": {
     "mode": "segmented"
+  },
+  "archive": {
+    "order_mode": "catalog"
   }
 }

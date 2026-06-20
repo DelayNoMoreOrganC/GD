@@ -88,11 +88,11 @@ def round_rect(cv, x1, y1, x2, y2, r, **kwargs):
 def fit_window(
     window,
     content=None,
-    design_w=680,
+    design_w=960,
     min_w=None,
-    min_h=620,
-    pad_outer=24,
-    max_h=960,
+    min_h=640,
+    pad_outer=28,
+    max_h=900,
 ):
     """类正方形窗口：固定宽度，按内容测量高度并居中。"""
     if min_w is not None:
@@ -100,6 +100,12 @@ def fit_window(
     try:
         window.geometry(f"{design_w}x{min_h}")
         window.update_idletasks()
+    except tk.TclError:
+        pass
+    # 允许尽量利用屏幕高度（为任务栏/标题栏留边距），避免日志区被压缩
+    try:
+        screen_h = window.winfo_screenheight()
+        max_h = max(max_h, screen_h - 120)
     except tk.TclError:
         pass
     if content is not None:
@@ -695,3 +701,109 @@ def apply_ttk_combobox_style(root):
         )
     except tk.TclError:
         pass
+
+
+class LoadingIndicator(tk.Canvas):
+    """加载动画指示器"""
+
+    def __init__(self, parent, size=32, colors=None, **kwargs):
+        colors = colors or C
+        super().__init__(
+            parent,
+            width=size,
+            height=size,
+            highlightthickness=0,
+            bg=kwargs.get("bg", colors["bg"]),
+        )
+        self._colors = colors
+        self._size = size
+        self._angle = 0
+        self._running = False
+        self._job = None
+
+    def start(self):
+        """开始动画"""
+        if not self._running:
+            self._running = True
+            self._animate()
+
+    def stop(self):
+        """停止动画"""
+        self._running = False
+        if self._job:
+            self.after_cancel(self._job)
+            self._job = None
+        self.delete("all")
+
+    def _animate(self):
+        if not self._running:
+            return
+
+        self.delete("all")
+        center = self._size // 2
+        radius = self._size // 3
+
+        # 绘制旋转圆弧
+        for i in range(8):
+            angle = self._angle + i * 45
+            rad = angle * 3.14159 / 180
+            x1 = center + (radius - 4) * rad
+            y1 = center + (radius - 4) * rad
+            x2 = center + radius * rad
+            y2 = center + radius * rad
+
+            alpha = 1.0 - (i / 8.0)
+            color = self._colors["accent"] if i < 4 else self._colors["accent_soft"]
+
+            self.create_arc(
+                center - radius, center - radius,
+                center + radius, center + radius,
+                start=angle, extent=40,
+                style=tk.ARC, outline=color, width=2
+            )
+
+        self._angle = (self._angle + 15) % 360
+        self._job = self.after(50, self._animate)
+
+
+class ProgressBar(tk.Frame):
+    """现代化进度条"""
+
+    def __init__(self, parent, colors=None, **kwargs):
+        colors = colors or C
+        super().__init__(parent, bg=kwargs.get("bg", colors["bg"]))
+        self._colors = colors
+        self._progress = 0
+
+        self.canvas = tk.Canvas(
+            self,
+            height=8,
+            highlightthickness=0,
+            bg=self._colors["input"],
+        )
+        self.canvas.pack(fill=tk.X)
+        self.canvas.bind("<Configure>", self._draw)
+
+    def set_progress(self, value):
+        """设置进度 (0-100)"""
+        self._progress = max(0, min(100, value))
+        self._draw()
+
+    def _draw(self, event=None):
+        self.canvas.delete("all")
+        w = self.canvas.winfo_width()
+        h = 8
+
+        if w < 10:
+            return
+
+        # 背景
+        round_rect(self.canvas, 1, 1, w-1, h-1, 4, fill=self._colors["input"], outline="")
+
+        # 进度
+        if self._progress > 0:
+            progress_w = (w - 4) * self._progress / 100
+            round_rect(
+                self.canvas, 2, 2, 2 + progress_w, h-2, 3,
+                fill=self._colors["accent"], outline=""
+            )

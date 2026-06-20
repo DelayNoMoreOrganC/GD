@@ -30,3 +30,4 @@ tesseract-installer.exe
 .claude/
 .vscode/
 .idea/
+.cursor/hooks/feishu.config.json

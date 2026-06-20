@@ -73,8 +73,24 @@ def fill_document_by_manifest(
     filled_coords = set()
     table_start = _table_range_start(doc)
 
+    # 调试日志：检查关键字段
+    if template_name == "送达材料清单":
+        key_field = "判决书上代理律师"
+        if key_field in field_patch:
+            print(f"  [DEBUG] 字典中包含 {key_field}: \"{field_patch[key_field]}\"")
+        else:
+            print(f"  [DEBUG] 字典中缺失 {key_field}")
+            print(f"  [DEBUG] 字典包含的字段: {list(field_patch.keys())[:10]}")
+
     if _use_textbox_fill(template_name):
         from textbox_fill import fill_textbox_by_manifest
+
+        # 调试日志
+        if template_name == "送达材料清单":
+            print(f"  [DEBUG] 使用textbox填充模式")
+            for key in field_patch.keys():
+                if "律师" in key:
+                    print(f"  [DEBUG] textbox字段 {key}: \"{field_patch[key]}\"")
 
         tb_total, tb_coords = fill_textbox_by_manifest(
             doc, template_name, field_patch, blacken_fn=blacken_fn
@@ -91,6 +107,11 @@ def fill_document_by_manifest(
         for (ti, row, col), patch in grouped.items():
             if not patch:
                 continue
+            # 调试日志：检查送达材料清单的填充情况
+            if template_name == "送达材料清单":
+                for key in patch.keys():
+                    if "律师" in key:
+                        print(f"  [DEBUG] 尝试填充 {key}: \"{patch[key]}\" 到 位置(表格{ti}, 行{row}, 列{col})")
             try:
                 rng = _cell_range(doc, ti, row, col)
                 hints = offset_hints.get((ti, row, col), {})

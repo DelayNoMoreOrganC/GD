@@ -221,10 +221,85 @@ def _poll_batch_results(
     raise RuntimeError(f"MinerU API 轮询超时（>{POLL_TIMEOUT}s），batch_id={batch_id}")
 
 
-def _text_from_zip_url(zip_url: str) -> str:
-    r = requests.get(zip_url, timeout=120)
-    r.raise_for_status()
-    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+def _download_zip_bytes(
+    zip_url: str,
+    log: LogFn = print,
+    retries: int = 8,
+    timeout: int = 300,
+) -> bytes:
+    """断点续传下载结果 zip（修复大文件慢速链路 IncompleteRead）。
+
+    连接中断时用 HTTP Range 从断点继续，而非重头下载；
+    完成后校验长度与 zip 完整性。
+    """
+    buf = bytearray()
+    expected: Optional[int] = None
+    last_err = None
+
+    for attempt in range(1, retries + 1):
+        headers = {}
+        if buf:
+            headers["Range"] = f"bytes={len(buf)}-"
+        try:
+            with requests.get(
+                zip_url, stream=True, timeout=timeout, headers=headers
+            ) as r:
+                # 已有数据却返回 200 → 服务器不支持 Range，重置从头下
+                if buf and r.status_code == 200:
+                    buf = bytearray()
+                r.raise_for_status()
+                if expected is None:
+                    cr = r.headers.get("Content-Range")  # bytes start-end/total
+                    cl = r.headers.get("Content-Length")
+                    if cr and "/" in cr and cr.rsplit("/", 1)[-1].isdigit():
+                        expected = int(cr.rsplit("/", 1)[-1])
+                    elif cl and cl.isdigit() and not buf:
+                        expected = int(cl)
+                for chunk in r.iter_content(chunk_size=1024 * 256):
+                    if chunk:
+                        buf.extend(chunk)
+        except Exception as e:  # noqa: BLE001 - 网络异常 → 续传重试
+            last_err = e
+            log(
+                f"  [WARN] 结果下载中断（第 {attempt}/{retries} 次，"
+                f"已收 {len(buf):,}"
+                + (f"/{expected:,}" if expected else "")
+                + f" 字节）: {e}"
+            )
+            if attempt < retries:
+                time.sleep(2)
+            continue
+
+        # 收齐校验
+        if expected is None or len(buf) >= expected:
+            data = bytes(buf)
+            if not data:
+                last_err = "下载内容为空"
+            else:
+                try:
+                    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+                        if zf.testzip() is not None:
+                            raise IOError("zip 校验失败（存在损坏文件）")
+                    if attempt > 1:
+                        log(f"  [OK] 结果下载完成（续传 {attempt} 次，{len(data):,} 字节）")
+                    return data
+                except Exception as e:  # zip 损坏 → 重置重下
+                    last_err = e
+                    log(f"  [WARN] 结果 zip 校验失败，将重下: {e}")
+                    buf = bytearray()
+                    expected = None
+        else:
+            log(
+                f"  [INFO] 续传中：已收 {len(buf):,}/{expected:,} 字节"
+            )
+        if attempt < retries:
+            time.sleep(1)
+
+    raise RuntimeError(f"MinerU API 结果下载失败: {last_err}")
+
+
+def _text_from_zip_bytes(content: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(content)) as zf:
         names = zf.namelist()
         for prefer in ("full.md", "content.md"):
             for n in names:
@@ -237,15 +312,26 @@ def _text_from_zip_url(zip_url: str) -> str:
     return ""
 
 
+def _save_zip_bytes_to_temp(content: bytes, log: LogFn = print) -> Optional[str]:
+    """将已下载的结果 zip 字节解压到临时目录（不再二次下载）。"""
+    import tempfile
+
+    tmp = tempfile.mkdtemp(prefix="mineru_api_")
+    with zipfile.ZipFile(io.BytesIO(content)) as zf:
+        zf.extractall(tmp)
+    log(f"  [OK] MinerU API 结果已解压: {tmp}")
+    return tmp
+
+
 def extract_pdf_with_mineru_api(
     pdf_path: str,
     config: dict,
     log: LogFn = print,
-) -> Tuple[Optional[str], Optional[str]]:
-    """单 PDF 云端解析，返回 (markdown文本, 错误)"""
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """单 PDF 云端解析，返回 (markdown文本, 错误, 解压目录)"""
     token = resolve_mineru_api_token(config)
     if not token:
-        return None, "未配置 MinerU API Token"
+        return None, "未配置 MinerU API Token", None
 
     from archive_ocr import get_pdf_page_count
 
@@ -271,11 +357,14 @@ def extract_pdf_with_mineru_api(
         )
         zip_url = done.get(os.path.basename(pdf_path)) or next(iter(done.values()), "")
         if not zip_url:
-            return None, "MinerU API 未返回结果下载链接"
-        text = _text_from_zip_url(zip_url)
+            return None, "MinerU API 未返回结果下载链接", None
+        # 仅下载一次（流式 + 重试 + 完整性校验），复用字节解析 md 与解压
+        zip_bytes = _download_zip_bytes(zip_url, log=log)
+        text = _text_from_zip_bytes(zip_bytes)
         if not text or len(text.strip()) < 80:
-            return None, "MinerU API 结果为空或过短"
+            return None, "MinerU API 结果为空或过短", None
+        output_dir = _save_zip_bytes_to_temp(zip_bytes, log=log)
         log(f"  [OK] MinerU API 输出 {len(text)} 字符")
-        return text, None
+        return text, None, output_dir
     except Exception as e:
-        return None, str(e)
+        return None, str(e), None

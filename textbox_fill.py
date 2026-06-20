@@ -173,6 +173,9 @@ def fill_textbox_by_manifest(
 
             cell_ok = True
             for ph, val in patch.items():
+                # 调试日志
+                if template_name == "送达材料清单" and "律师" in ph:
+                    print(f"  [DEBUG textbox fill] 尝试替换占位符: {ph} = \"{val}\"")
                 ok = fill_textbox_cell(
                     doc,
                     rng,
@@ -204,6 +207,59 @@ def fill_textbox_by_manifest(
             import sys
 
             print(f"  [WARN] 文本框填充 T{ti} R{row} C{col}: {e}", file=sys.stderr)
+
+    # 处理段落占位符（送达材料清单的paragraph类型占位符）
+    try:
+        print(f"  [DEBUG] 开始处理段落占位符，模板: {template_name}")
+        from template_manifest import get_paragraph_fills
+        from manifest_word_fill import _paragraph_range, _table_range_start
+
+        paragraph_fills = get_paragraph_fills(manifest)
+        print(f"  [DEBUG] get_paragraph_fills返回: {len(paragraph_fills)}个段落")
+        if paragraph_fills:
+            table_start = _table_range_start(doc)
+            for p in paragraph_fills:
+                idx = p.get("index")
+                if not idx:
+                    continue
+                ph = p.get("placeholder")
+                if not ph:
+                    continue
+                val = field_patch.get(ph, "" if p.get("role") == "clear" else None)
+                if val is None and p.get("role") != "clear":
+                    print(f"  [DEBUG] 跳过段落 {ph}（val为None且role不是clear）")
+                    continue
+
+                # 调试日志
+                print(f"  [DEBUG] 准备处理段落 {ph}, val=\"{val}\", role={p.get('role')}")
+                if template_name == "送达材料清单" and "律师" in ph:
+                    print(f"  [DEBUG textbox paragraph] 尝试填充段落占位符: {ph} = \"{val}\"")
+
+                try:
+                    print(f"  [DEBUG] 开始处理段落 index={idx}, ph={ph}")
+                    rng = _paragraph_range(doc, idx, table_start)
+                    print(f"  [DEBUG] _paragraph_range成功，range长度: {rng.End - rng.Start}")
+                    off = {ph: p["offset"]} if p.get("offset") else {}
+                    print(f"  [DEBUG] offset配置: {off}")
+                    n = replace_placeholders_atomic(
+                        doc,
+                        rng,
+                        {ph: str(val)},
+                        blacken_fn=blacken_fn,
+                        placeholder_offsets=off,
+                    )
+                    print(f"  [DEBUG] replace_placeholders_atomic返回: {n}")
+                    if n:
+                        total += n
+                        # 调试日志
+                        if template_name == "送达材料清单" and "律师" in ph:
+                            print(f"  [DEBUG textbox paragraph] 成功填充段落占位符: {ph}")
+                except Exception as e:
+                    import sys
+                    print(f"  [WARN] 文本框段落填充 idx={idx}, ph={ph}: {e}", file=sys.stderr)
+    except Exception as e:
+        import sys
+        print(f"  [WARN] 处理段落占位符时出错: {e}", file=sys.stderr)
 
     return total, filled_coords
 

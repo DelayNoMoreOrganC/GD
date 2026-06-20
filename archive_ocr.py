@@ -117,7 +117,8 @@ def extract_pdf_text(pdf_path, config, log=print):
     if engine == "mineru_api":
         from mineru_api import extract_pdf_with_mineru_api
 
-        return extract_pdf_with_mineru_api(pdf_path, config, log=log)
+        text, err, _ = extract_pdf_with_mineru_api(pdf_path, config, log=log)
+        return text, err
 
     if engine == "mineru":
         from mineru_ocr import extract_pdf_with_mineru

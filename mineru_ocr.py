@@ -337,28 +337,28 @@ def run_mineru_parse(
     pdf_path: str,
     config: dict,
     log: LogFn = print,
-) -> Tuple[Optional[str], Optional[str]]:
+) -> Tuple[Optional[str], Optional[str], Optional[str]]:
     """
-    调用 MinerU CLI 解析 PDF，返回 (文本, 错误信息)。
+    调用 MinerU CLI 解析 PDF，返回 (文本, 错误信息, 输出目录)。
     """
     from archive_ocr import extract_pdf_text_direct, get_pdf_page_count
 
     mcfg = get_mineru_settings(config)
     cli = resolve_mineru_cli(mcfg.get("cli_path", ""))
     if not cli:
-        return None, "未安装 MinerU CLI，请执行 pip install -U \"mineru[all]\""
+        return None, "未安装 MinerU CLI，请执行 pip install -U \"mineru[all]\"", None
 
     ok, ver = check_mineru_available(config)
     if ok:
         log(f"  [OK] MinerU: {ver}")
     else:
-        return None, ver
+        return None, ver, None
 
     backend = mcfg.get("backend", "pipeline")
     if backend in ("pipeline", "hybrid-auto-engine", "hybrid-http-client"):
         dep_ok, dep_msg = check_pipeline_dependencies(mcfg.get("cli_path", ""))
         if not dep_ok:
-            return None, dep_msg
+            return None, dep_msg, None
         if "CUDA 就绪" in dep_msg:
             log(f"  [OK] {dep_msg}")
 
@@ -366,7 +366,7 @@ def run_mineru_parse(
         direct = extract_pdf_text_direct(pdf_path)
         if direct and len(direct.strip()) > 800:
             log(f"  [OK] PDF 文字层 {len(direct)} 字符（跳过 MinerU）")
-            return direct, None
+            return direct, None, None
 
     total = get_pdf_page_count(pdf_path)
     max_pages = config.get("local_ocr", {}).get("max_pages", 0)
@@ -412,9 +412,9 @@ def run_mineru_parse(
                 cwd=work_parent,
             )
         except subprocess.TimeoutExpired:
-            return None, f"MinerU 超时（>{timeout}s），可在 config 中增大 mineru.timeout_seconds"
+            return None, f"MinerU 超时（>{timeout}s），可在 config 中增大 mineru.timeout_seconds", None
         except Exception as e:
-            return None, str(e)
+            return None, str(e), None
         if proc.returncode == 0:
             break
         raw = proc.stderr or proc.stdout or ""
@@ -423,16 +423,18 @@ def run_mineru_parse(
             "requires local pipeline" in raw or "hybrid-auto-engine" in raw
         ):
             continue
-        return None, f"MinerU 退出码 {proc.returncode}: {last_err}"
+        return None, f"MinerU 退出码 {proc.returncode}: {last_err}", None
 
     text = read_mineru_output(out_dir, pdf_path, keep_markdown=True)
+    meta_dir = out_dir
     if not text or len(text.strip()) < 80:
         # 部分版本输出在 work_parent 子目录
         text = read_mineru_output(work_parent, pdf_path, keep_markdown=True)
+        meta_dir = work_parent
     if len(text.strip()) < 80:
-        return None, "MinerU 已完成但未找到有效 .md 输出，请检查 mineru 安装与 GPU 驱动"
+        return None, "MinerU 已完成但未找到有效 .md 输出，请检查 mineru 安装与 GPU 驱动", None
     log(f"  [OK] MinerU 输出 {len(text)} 字符")
-    return text, None
+    return text, None, meta_dir
 
 
 def extract_pdf_with_mineru(
@@ -441,7 +443,7 @@ def extract_pdf_with_mineru(
     log: LogFn = print,
 ) -> Tuple[Optional[str], Optional[str]]:
     """V2 主入口：MinerU 解析，可选回退百度 OCR"""
-    text, err = run_mineru_parse(pdf_path, config, log=log)
+    text, err, _ = run_mineru_parse(pdf_path, config, log=log)
     if text and len(text.strip()) >= 100:
         return text, None
 

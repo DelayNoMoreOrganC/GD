@@ -8,13 +8,14 @@ from document_segmenter import (
     DOC_TYPE_CONTRACT,
     DOC_TYPE_EXECUTION,
     DOC_TYPE_JUDGMENT,
+    DOC_TYPE_POA,
 )
 
 FIELD_PRIORITY = {
-    "委托人": [DOC_TYPE_CONTRACT, DOC_TYPE_JUDGMENT, DOC_TYPE_COMPLAINT],
-    "委托人名称": [DOC_TYPE_CONTRACT],
-    "委托人电话": [DOC_TYPE_CONTRACT],
-    "委托人联系地址及电话": [DOC_TYPE_CONTRACT],
+    "委托人": [DOC_TYPE_POA, DOC_TYPE_CONTRACT, DOC_TYPE_JUDGMENT, DOC_TYPE_COMPLAINT],  # poa优先
+    "委托人名称": [DOC_TYPE_POA, DOC_TYPE_CONTRACT],  # poa优先
+    "委托人电话": [DOC_TYPE_POA, DOC_TYPE_CONTRACT],  # poa优先
+    "委托人联系地址及电话": [DOC_TYPE_POA, DOC_TYPE_CONTRACT],  # poa优先
     "收案日期": [DOC_TYPE_CONTRACT],
     "立案日期": [DOC_TYPE_CONTRACT],
     "案号": [DOC_TYPE_JUDGMENT, DOC_TYPE_EXECUTION],
@@ -22,30 +23,53 @@ FIELD_PRIORITY = {
     "案由": [DOC_TYPE_JUDGMENT],
     "审理法院": [DOC_TYPE_JUDGMENT],
     "审级": [DOC_TYPE_JUDGMENT],
-    "委托方": [DOC_TYPE_JUDGMENT],
-    "承办律师": [DOC_TYPE_JUDGMENT],
-    "代理律师": [DOC_TYPE_JUDGMENT],
-    "当事人": [DOC_TYPE_COMPLAINT, DOC_TYPE_JUDGMENT],
+    "委托方": [DOC_TYPE_JUDGMENT],  # 保留别名兼容
+    "当事人": [DOC_TYPE_JUDGMENT, DOC_TYPE_COMPLAINT],
+    "判决书中的原告": [DOC_TYPE_JUDGMENT, DOC_TYPE_COMPLAINT],
+    "判决书中的被告": [DOC_TYPE_JUDGMENT, DOC_TYPE_COMPLAINT],
+    "起诉状中的原告": [DOC_TYPE_COMPLAINT, DOC_TYPE_JUDGMENT],
+    "起诉状中的被告": [DOC_TYPE_COMPLAINT, DOC_TYPE_JUDGMENT],
+    "判决书上代理律师": [DOC_TYPE_JUDGMENT, DOC_TYPE_POA],
+    "判决书原告的委托诉讼代理人": [DOC_TYPE_JUDGMENT, DOC_TYPE_POA],
     "地址": [DOC_TYPE_COMPLAINT],
-    "对方当事人": [DOC_TYPE_COMPLAINT],
+    "对方当事人": [DOC_TYPE_JUDGMENT, DOC_TYPE_COMPLAINT],  # 调整优先级，判决书优先
     "案情简介": [DOC_TYPE_COMPLAINT, DOC_TYPE_JUDGMENT],
     "案件或项目名称": [DOC_TYPE_JUDGMENT],
     "结案小结": [DOC_TYPE_JUDGMENT, DOC_TYPE_EXECUTION],
     "审（办）结果": [DOC_TYPE_JUDGMENT, DOC_TYPE_EXECUTION],
     "法院文件清单": [DOC_TYPE_JUDGMENT, DOC_TYPE_EXECUTION],
+    "承办律师": [DOC_TYPE_POA, DOC_TYPE_JUDGMENT],  # poa优先（授权委托书有律师信息）
 }
 
 
+# 占位符/无效值：不应被当作"已找到"，否则会盖掉其他分路的真实值
+_PLACEHOLDERS = {"待确认", "无", "none", "n/a", "na", "未知", "暂无", "/", "-", "—"}
+
+
+def _is_valid(val: str) -> bool:
+    v = (val or "").strip()
+    return bool(v) and v.lower() not in _PLACEHOLDERS
+
+
 def _pick_value(field: str, partials: dict) -> str:
+    # 优先按字段路由顺序取「有效」值（跳过"待确认"等占位符）
     for doc_type in FIELD_PRIORITY.get(field, []):
-        bucket = partials.get(doc_type) or {}
-        val = (bucket.get(field) or "").strip()
-        if val:
-            return val
+        val = (partials.get(doc_type) or {}).get(field) or ""
+        if _is_valid(val):
+            return val.strip()
     for bucket in partials.values():
-        val = (bucket.get(field) or "").strip()
-        if val:
-            return val
+        val = bucket.get(field) or ""
+        if _is_valid(val):
+            return val.strip()
+    # 全部分路都没有有效值时，保留占位符（若有），让模板显示"待确认"
+    for doc_type in FIELD_PRIORITY.get(field, []):
+        val = (partials.get(doc_type) or {}).get(field) or ""
+        if val.strip():
+            return val.strip()
+    for bucket in partials.values():
+        val = bucket.get(field) or ""
+        if val.strip():
+            return val.strip()
     return ""
 
 

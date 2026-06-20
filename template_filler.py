@@ -183,103 +183,110 @@ def _word_fill_document(template_path, field_data, output_path, template_name=No
     import pythoncom
     import win32com.client
 
-    pythoncom.CoInitialize()
-    word = None
-    doc = None
-    replaced = 0
     try:
-        word = win32com.client.DispatchEx("Word.Application")
-        word.Visible = False
-        word.DisplayAlerts = 0
+        from archive_pipeline import _word_lock
+    except ImportError:
+        from contextlib import nullcontext
+        _word_lock = nullcontext()
 
-        doc = word.Documents.Open(os.path.abspath(template_path))
+    with _word_lock:
+        pythoncom.CoInitialize()
+        word = None
+        doc = None
+        replaced = 0
+        try:
+            word = win32com.client.DispatchEx("Word.Application")
+            word.Visible = False
+            word.DisplayAlerts = 0
 
-        row_snapshot = snapshot_table_row_heights(doc)
+            doc = word.Documents.Open(os.path.abspath(template_path))
 
-        if template_name == "送达材料清单":
-            from delivery_list_filler import word_fill_delivery_list
+            row_snapshot = snapshot_table_row_heights(doc)
 
-            word_fill_delivery_list(doc, field_data, output_path)
+            if template_name == "送达材料清单":
+                from delivery_list_filler import word_fill_delivery_list
+
+                word_fill_delivery_list(doc, field_data, output_path)
+                doc.Close(False)
+                layout_issues = []
+                try:
+                    from layout_verify import verify_template
+
+                    layout_issues = verify_template("送达材料清单", output_path)
+                    for issue in layout_issues:
+                        print(f"  [LAYOUT] {issue}")
+                except Exception:
+                    pass
+                return output_path, layout_issues
+
+            if not template_name:
+                raise ValueError("template_name 必填（V1.2 映射表填充）")
+
+            normal_fields, sequential_fields = _split_field_data(field_data)
+
+            replaced, coords = fill_document_by_manifest(
+                doc,
+                template_name,
+                normal_fields,
+                blacken_fn=_blacken_range,
+                validate=False,
+            )
+            if sequential_fields:
+                seq_n, _seq_coords = fill_seq_cells_by_manifest(
+                    doc,
+                    template_name,
+                    sequential_fields,
+                    blacken_fn=_blacken_range,
+                )
+                replaced += seq_n
+
+            optimize_document_tables(doc, template_name=template_name)
+
+            restored = restore_table_row_heights(doc, row_snapshot)
+            if restored:
+                print(f"  [OK] 已恢复 {restored} 行表格行高")
+
+            from post_fill_cleanup import finalize_fill_document
+
+            finalize_fill_document(
+                doc,
+                template_name,
+                blacken_fn=_blacken_range,
+                field_patch=normal_fields,
+            )
+
+            out_abs = os.path.abspath(output_path)
+            os.makedirs(os.path.dirname(out_abs) or ".", exist_ok=True)
+            if output_path.lower().endswith(".docx"):
+                doc.SaveAs2(out_abs, FileFormat=WD_FORMAT_DOCX)
+            else:
+                doc.SaveAs2(out_abs)
             doc.Close(False)
+            print(f"\n[OK] Word 填充完成，约 {replaced} 类占位符，输出: {output_path}")
+
             layout_issues = []
             try:
                 from layout_verify import verify_template
 
-                layout_issues = verify_template("送达材料清单", output_path)
+                layout_issues = verify_template(template_name, output_path)
                 for issue in layout_issues:
                     print(f"  [LAYOUT] {issue}")
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"  [WARN] 版式校验跳过: {e}")
+
             return output_path, layout_issues
-
-        if not template_name:
-            raise ValueError("template_name 必填（V1.2 映射表填充）")
-
-        normal_fields, sequential_fields = _split_field_data(field_data)
-
-        replaced, coords = fill_document_by_manifest(
-            doc,
-            template_name,
-            normal_fields,
-            blacken_fn=_blacken_range,
-            validate=False,
-        )
-        if sequential_fields:
-            seq_n, _seq_coords = fill_seq_cells_by_manifest(
-                doc,
-                template_name,
-                sequential_fields,
-                blacken_fn=_blacken_range,
-            )
-            replaced += seq_n
-
-        optimize_document_tables(doc, template_name=template_name)
-
-        restored = restore_table_row_heights(doc, row_snapshot)
-        if restored:
-            print(f"  [OK] 已恢复 {restored} 行表格行高")
-
-        from post_fill_cleanup import finalize_fill_document
-
-        finalize_fill_document(
-            doc,
-            template_name,
-            blacken_fn=_blacken_range,
-            field_patch=normal_fields,
-        )
-
-        out_abs = os.path.abspath(output_path)
-        os.makedirs(os.path.dirname(out_abs) or ".", exist_ok=True)
-        if output_path.lower().endswith(".docx"):
-            doc.SaveAs2(out_abs, FileFormat=WD_FORMAT_DOCX)
-        else:
-            doc.SaveAs2(out_abs)
-        doc.Close(False)
-        print(f"\n[OK] Word 填充完成，约 {replaced} 类占位符，输出: {output_path}")
-
-        layout_issues = []
-        try:
-            from layout_verify import verify_template
-
-            layout_issues = verify_template(template_name, output_path)
-            for issue in layout_issues:
-                print(f"  [LAYOUT] {issue}")
-        except Exception as e:
-            print(f"  [WARN] 版式校验跳过: {e}")
-
-        return output_path, layout_issues
-    finally:
-        if doc is not None:
-            try:
-                doc.Close(False)
-            except Exception:
-                pass
-        if word is not None:
-            try:
-                word.Quit()
-            except Exception:
-                pass
-        pythoncom.CoUninitialize()
+        finally:
+            if doc is not None:
+                try:
+                    doc.Close(False)
+                except Exception:
+                    pass
+            if word is not None:
+                try:
+                    word.Quit()
+                except Exception:
+                    pass
+            pythoncom.CoUninitialize()
 
 
 def _docx_replace_placeholders(docx_path, field_data, output_path):

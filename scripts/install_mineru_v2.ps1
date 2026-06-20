@@ -25,9 +25,9 @@ Write-Host "`n验证 mineru CLI..." -ForegroundColor Green
 & "$venv\Scripts\mineru.exe" --version
 
 if (-not (Test-Path "config.json")) {
-    Copy-Item "config.json.v2.example" "config.json"
+    Copy-Item "config.json.example" "config.json"
     Write-Host "已生成 config.json（请填写 deepseek.api_key）"
 }
 
-Write-Host "`n完成。运行 GUI: py legal_archive_gui_v2.py" -ForegroundColor Green
+Write-Host "`n完成。运行 GUI: py legal_archive_gui.py" -ForegroundColor Green
 Write-Host "自检: py tools\check_mineru_env.py"
