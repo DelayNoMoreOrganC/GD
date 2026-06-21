@@ -174,7 +174,7 @@ def _deepseek_chat(user_content: str, system_content: str, *, max_retries: int =
             print("  [WARN] LLM 输出解析为空，重试一次（强调格式）")
             extra_hint = (
                 "\n\n注意：请严格按「字段名: 值」逐行输出，"
-                "未知字段填「待确认」，不要输出解释或空白。"
+                "找不到确切信息的字段直接留空（值为空），不要填「待确认」或说明文字。"
             )
 
     if last_err:

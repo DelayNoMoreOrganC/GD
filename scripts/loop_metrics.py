@@ -64,6 +64,7 @@ def score_case(path, case_type, config):
     cnt = Counter(covered)
     dup_pages = sum(v - 1 for v in cnt.values() if v > 1)
     gap_pages = max(0, n_pages - len(set(covered)))
+    pages_covered = len(set(covered))
 
     # 自动可识别(pdf/mixed)目录项的命中情况；manual 项靠人工上传不计入
     found_seqs = {u.catalog_seq for u in spans if u.catalog_seq is not None}
@@ -86,6 +87,7 @@ def score_case(path, case_type, config):
     gt = GROUND_TRUTH.get(os.path.basename(path))
     type_acc = None
     type_wrong = []
+    type_acc_by_stage = None
     if gt:
         page_seq = {}
         for u in spans:
@@ -100,6 +102,39 @@ def score_case(path, case_type, config):
                 type_wrong.append({"p": p, "exp": exp, "got": got})
         type_acc = round(correct / len(gt), 3) if gt else None
 
+        # 分阶段 type_acc：把 seq 归到诉讼阶段，分别报命中率（定位回退到具体阶段）
+        # 阶段定义：filing(立案/委托 2-6) / evidence(证据 7) / trial(裁判 14)
+        #           execution(执行 15) / preservation(保全 8) / other(其余)
+        def _stage_of(s):
+            if s in (2, 3, 4, 5, 6):
+                return "filing"
+            if s == 7:
+                return "evidence"
+            if s == 8:
+                return "preservation"
+            if s == 14:
+                return "trial"
+            if s == 15:
+                return "execution"
+            return "other"
+
+        stage_stat = {}  # stage -> {"correct": n, "total": n}
+        for p, exp in gt.items():
+            st = _stage_of(exp)
+            d = stage_stat.setdefault(st, {"correct": 0, "total": 0})
+            d["total"] += 1
+            if page_seq.get(p) == exp:
+                d["correct"] += 1
+        # 存 correct/total 计数（便于跨案加权聚合）；派生 acc 供展示
+        type_acc_by_stage = {
+            st: {
+                "correct": v["correct"],
+                "total": v["total"],
+                "acc": round(v["correct"] / v["total"], 3),
+            }
+            for st, v in sorted(stage_stat.items())
+        }
+
     type_tier = "tier1" if os.path.basename(path) in GT_TIER1 else (
         "tier2" if gt else None
     )
@@ -112,6 +147,9 @@ def score_case(path, case_type, config):
     return {
         "case": os.path.basename(path),
         "pages": n_pages,
+        "pages_covered": pages_covered,
+        # coverage_complete：实际覆盖页数 == PDF 页数 且 gap=0，页漂移时为 False
+        "coverage_complete": (pages_covered == n_pages and gap_pages == 0),
         "units": units,
         "dup_pages": dup_pages,
         "gap_pages": gap_pages,
@@ -120,6 +158,7 @@ def score_case(path, case_type, config):
         "missing_pdf_seqs": missing_pdf_seqs_raw,
         "low_conf": low_conf,
         "type_acc": type_acc,
+        "type_acc_by_stage": type_acc_by_stage,
         "type_tier": type_tier,
         "type_wrong": type_wrong,
         "score": score,
@@ -181,6 +220,22 @@ def main():
         print(f"     type_acc Tier2({len(tier2)}案): {type_avg_t2:.3f}")
     if not tier1 and not tier2:
         print(f"     类型准确率: 无 GT")
+    # 分阶段 type_acc 聚合：跨所有有 GT 的案，按 correct/total 加权（页级）
+    stage_agg = {}  # stage -> {"correct": n, "total": n}
+    for r in with_gt:
+        for st, v in (r.get("type_acc_by_stage") or {}).items():
+            d = stage_agg.setdefault(st, {"correct": 0, "total": 0})
+            d["correct"] += v.get("correct", 0)
+            d["total"] += v.get("total", 0)
+    stage_avg = {}
+    for st, d in stage_agg.items():
+        stage_avg[st] = round(d["correct"] / d["total"], 3) if d["total"] else None
+    if with_gt:
+        print(f"     type_acc 分阶段（{len(with_gt)}案页级加权）:")
+        for st in ("filing", "evidence", "preservation", "trial", "execution", "other"):
+            if st in stage_avg and stage_avg[st] is not None:
+                d = stage_agg[st]
+                print(f"       {st:14s}: {stage_avg[st]:.3f} ({d['correct']}/{d['total']})")
     if without_gt:
         print(f"     [WARN] 无 GT 案件: {', '.join(r['case'] for r in without_gt[:5])}"
               + (" ..." if len(without_gt) > 5 else ""))
@@ -192,8 +247,9 @@ def main():
             "avg": avg,
             "total": total,
             "struct_avg_no_gt": struct_avg,
-            "type_avg_tier1": type_avg_t1,
+           "type_avg_tier1": type_avg_t1,
             "type_avg_tier2": type_avg_t2,
+            "type_avg_by_stage": stage_avg,
             "gt_coverage": f"{len(with_gt)}/{len(valid)}",
             "results": results,
         }, f, ensure_ascii=False, indent=2)

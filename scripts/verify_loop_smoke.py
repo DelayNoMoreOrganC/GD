@@ -16,11 +16,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from loop_metrics import score_case
-from ground_truth import GROUND_TRUTH, GT_TIER1, GT_TIER1_MIN_ACC
+from ground_truth import (
+    GROUND_TRUTH,
+    GT_TIER1,
+    GT_TIER1_EXPECTED_PAGES,
+    GT_TIER1_MIN_ACC,
+)
 from settings import load_config
 
 # 有逐页 GT 的三案 + 最低 type_acc 门槛（Iteration 8 基线）
 GT_CASES = dict(GT_TIER1_MIN_ACC)
+# P0-D 页漂移守卫：Tier1 三案实际页数必须 == 期望页数
+EXPECTED_PAGES = dict(GT_TIER1_EXPECTED_PAGES)
 
 
 def main():
@@ -42,9 +49,22 @@ def main():
         r = score_case(path, case_type, config)
         dup, gap = r["dup_pages"], r["gap_pages"]
         ta = r.get("type_acc")
-        ok = dup == 0 and gap == 0 and ta is not None and ta >= min_acc
+        pages = r.get("pages")
+        exp_pages = EXPECTED_PAGES.get(name)
+        page_ok = exp_pages is not None and pages == exp_pages
+        coverage_ok = r.get("coverage_complete", True)
+        ok = (
+            dup == 0 and gap == 0 and ta is not None and ta >= min_acc
+            and page_ok and coverage_ok
+        )
         mark = "OK" if ok else "FAIL"
-        print(f"  [{mark}] {name}: dup={dup} gap={gap} type_acc={ta} (min={min_acc})")
+        page_note = (
+            f" pages={pages} (exp={exp_pages})" if exp_pages is not None else ""
+        )
+        print(
+            f"  [{mark}] {name}: dup={dup} gap={gap} type_acc={ta} "
+            f"(min={min_acc}){page_note} cov={'Y' if coverage_ok else 'N'}"
+        )
         if ta is not None:
             type_accs.append(ta)
         if not ok:

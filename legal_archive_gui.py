@@ -350,26 +350,19 @@ class ArchiveApp(tk.Tk):
         ct_grid = tk.Frame(self.case_type_frame, bg=C["card"])
         ct_grid.pack(fill=tk.X, pady=(0, 8))
 
-        case_types = [
-            ("civil", "民事"),
-            ("criminal", "刑事"),
-            ("admin", "行政"),
-            ("nonlit", "非诉"),
-            ("counsel", "顾问"),
-        ]
-        for i, (code, label) in enumerate(case_types):
-            tk.Radiobutton(
-                ct_grid,
-                text=label,
-                variable=self.case_type,
-                value=code,
-                font=self._fonts["cap"],
-                bg=C["card"],
-                fg=C["text"],
-                activebackground=C["accent_soft"],
-                activeforeground=C["accent"],
-                selectcolor=C["accent_soft"],
-            ).grid(row=i // 3, column=i % 3, sticky="w", padx=6, pady=2)
+        ChipRadio(
+            ct_grid,
+            (
+                ("civil", "民事"),
+                ("criminal", "刑事"),
+                ("admin", "行政"),
+                ("nonlit", "非诉"),
+                ("counsel", "顾问"),
+            ),
+            self.case_type,
+            colors=C,
+            fonts=self._fonts,
+        ).pack(fill=tk.X)
 
         # 正文排序模式
         tk.Label(
@@ -382,19 +375,13 @@ class ArchiveApp(tk.Tk):
         self.archive_order_mode = tk.StringVar(value="catalog")
         om_grid = tk.Frame(self.case_type_frame, bg=C["card"])
         om_grid.pack(fill=tk.X, pady=(0, 8))
-        for code, label in (("catalog", "按目录顺序"), ("original", "保持原始页序")):
-            tk.Radiobutton(
-                om_grid,
-                text=label,
-                variable=self.archive_order_mode,
-                value=code,
-                font=self._fonts["cap"],
-                bg=C["card"],
-                fg=C["text"],
-                activebackground=C["accent_soft"],
-                activeforeground=C["accent"],
-                selectcolor=C["accent_soft"],
-            ).pack(side=tk.LEFT, padx=6)
+        ChipRadio(
+            om_grid,
+            (("catalog", "按目录顺序"), ("original", "保持原始页序")),
+            self.archive_order_mode,
+            colors=C,
+            fonts=self._fonts,
+        ).pack(fill=tk.X)
 
         # 进度条（完整归档时显示）
         self.archive_progress = tk.DoubleVar(value=0)
@@ -639,7 +626,6 @@ class ArchiveApp(tk.Tk):
                 style="danger_soft",
                 fonts=self._fonts,
             )
-            rm.pack(side=tk.LEFT, padx=(0, 8))  # 移到左侧
             rm.configure(width=56)
             rm.pack(side=tk.RIGHT, padx=(6, 0))
 
@@ -1535,12 +1521,17 @@ class ArchiveApp(tk.Tk):
             return
         # 保存引用，避免被垃圾回收
         win._preview_img = img
-        canvas = tk.Canvas(win, width=min(img.width(), 900), height=min(img.height(), 1000))
+        cw, ch = min(img.width(), 760), min(img.height(), 920)
+        canvas = tk.Canvas(win, width=cw, height=ch, highlightthickness=0)
         vbar = tk.Scrollbar(win, orient="vertical", command=canvas.yview)
         canvas.configure(yscrollcommand=vbar.set, scrollregion=(0, 0, img.width(), img.height()))
         canvas.create_image(0, 0, anchor="nw", image=img)
         vbar.pack(side=tk.RIGHT, fill=tk.Y)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # 居中显示并设置合理初始尺寸
+        win.update_idletasks()
+        win.geometry(f"{cw + 20}x{ch + 10}")
+        win.resizable(True, True)
 
     def _cancel_archive_run(self, reason: str = "已取消"):
         """用户中途关闭对话框：恢复 UI 状态，避免界面假死。"""

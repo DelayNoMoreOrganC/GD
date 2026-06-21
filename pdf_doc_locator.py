@@ -174,7 +174,28 @@ def _validate_document_type(text: str, doc_type: str) -> bool:
         head = text[:40]
         if any(k in head for k in ("判决书", "裁定书", "笔录")):
             return False
+        # 排除银行「特种转帐贷方传票」等非法院业务凭证（含「传票」但实为转账单）
+        head200 = text[:200]
+        if any(k in head200 for k in ("特种转帐", "贷方传票", "转帐贷方", "特种转账", "转账贷方")):
+            if "人民法院" not in head200 and "法院" not in text[:100]:
+                return False
         return any(k in text for k in ("出庭通知", "传票", "传唤"))
+    elif doc_type == ds.DOC_TYPE_COMPLAINT:
+        # 起诉状/答辩状在判决书正文常被引用（「送达起诉状副本」「《起诉状》」），
+        # 排除这两类正文引用模式；其余（含真正的起诉状首页及其续页）照常通过。
+        stripped = re.sub(r"《[^》]*》", "", text)
+        if re.search(r"送达.{0,8}(起诉状|答辩状)", stripped):
+            return False
+        if re.search(r"(起诉状|答辩状)副本", stripped):
+            return False
+        return True
+    elif doc_type == ds.DOC_TYPE_CONTRACT:
+        # 判决书/执行文书正文常引用《民事委托代理合同》等；仅排除书名号包围的正文引用。
+        # 续页（无锚点）不经过此处；真正的合同首页锚点在标题区，照常通过。
+        stripped = re.sub(r"《[^》]*》", "", text)
+        if re.search(r"(委托代理合同|代理合同|法律服务合同|委托合同)", stripped):
+            return True
+        return False
     return True  # 其他类型默认通过
 
 
@@ -852,6 +873,11 @@ def segment_by_catalog(
     evidence_seq = _evidence_seq(catalog)
     if evidence_seq is None:
         evidence_seq = 7
+    # 审判槽 seq（阶段锁定用）：裁判正文引用「证据」时不得夺页（§3 规则）
+    trial_seq = _trial_seq(catalog)
+    # 起诉状/合同槽 seq（阶段锁定兜底用）：裁判正文引用「起诉状/代理合同」时不得夺页
+    complaint_seq = _catalog_seq_for_doc_type(case_type, ds.DOC_TYPE_COMPLAINT)
+    contract_seq = _catalog_seq_for_doc_type(case_type, ds.DOC_TYPE_CONTRACT)
 
     heading_pages = set()
     if layout_blocks:
@@ -935,6 +961,22 @@ def segment_by_catalog(
                 can_switch = False
 
         switching = can_switch and result.method not in ("inherit", "weak_anchor")
+        # 阶段锁定（§3）：当前处于裁判段(trial)时，禁止证据/起诉状/合同等弱锚点夺走裁判正文页。
+        # 判决书正文常引用「证据」「送达起诉状副本」「《委托代理合同》」等，会命中对应锚点误切。
+        # 仅当信号来自 layout 标题（MinerU title 块）时才允许脱离 trial。
+        _trial_steal = (
+            result.catalog_seq is not None
+            and result.catalog_seq != trial_seq
+            and result.method != "layout"
+            and result.catalog_seq in (evidence_seq, complaint_seq, contract_seq)
+        )
+        if (
+            switching
+            and trial_seq is not None
+            and context_seq == trial_seq
+            and _trial_steal
+        ):
+            switching = False
         if switching:
             seq = result.catalog_seq
             conf = result.confidence
@@ -1164,6 +1206,7 @@ def _should_break_contract_run(text: str) -> bool:
     return False
 
 
+
 def _dedupe_commission_contract_pages(
     page_seqs: List[int],
     page_texts: List[str],
@@ -1247,18 +1290,9 @@ def _dedupe_commission_contract_pages(
         has_title = _is_commission_contract_title_page(page_texts[start])
 
         keep = False
-        if run_len >= 2 and has_title:
-            if start < complaint_start:
-                keep = True
-            else:
-                # 证据段内的完整合同块须有多页合同锚点（排除单页副本+继承续页）
-                contract_anchor_pages = sum(
-                    1
-                    for p in range(start, end + 1)
-                    if _classify_page_prefix(page_texts[p])[0] == ds.DOC_TYPE_CONTRACT
-                )
-                keep = contract_anchor_pages >= 2
-        elif run_len == 1 and has_title and start < complaint_start:
+        # §3.1 卷首(证据外)委托代理合同=seq3；证据段内的合同一律归证据(seq7)——
+        # 合同副本作为证据提交证明律师费支出，证据外另有合同(重复)时只保留证据外。
+        if has_title and start < complaint_start:
             keep = True
 
         if not keep:
@@ -1314,6 +1348,14 @@ def _dedupe_commission_contract_pages(
 def _evidence_seq(catalog: List[ac.CatalogItem]) -> Optional[int]:
     for item in catalog:
         if item.manual_key == "evidence":
+            return item.seq
+    return None
+
+
+def _trial_seq(catalog: List[ac.CatalogItem]) -> Optional[int]:
+    """审判文书槽（判决/裁定/调解）的 seq；用于阶段锁定（§3：裁判正文页不得被证据锚点夺走）。"""
+    for item in catalog:
+        if ds.DOC_TYPE_JUDGMENT in item.doc_types:
             return item.seq
     return None
 

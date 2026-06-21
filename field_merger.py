@@ -42,13 +42,11 @@ FIELD_PRIORITY = {
 }
 
 
-# 占位符/无效值：不应被当作"已找到"，否则会盖掉其他分路的真实值
-_PLACEHOLDERS = {"待确认", "无", "none", "n/a", "na", "未知", "暂无", "/", "-", "—"}
 
 
 def _is_valid(val: str) -> bool:
-    v = (val or "").strip()
-    return bool(v) and v.lower() not in _PLACEHOLDERS
+    from field_mapping import is_placeholder_value
+    return not is_placeholder_value(val)
 
 
 def _pick_value(field: str, partials: dict) -> str:
@@ -61,15 +59,7 @@ def _pick_value(field: str, partials: dict) -> str:
         val = bucket.get(field) or ""
         if _is_valid(val):
             return val.strip()
-    # 全部分路都没有有效值时，保留占位符（若有），让模板显示"待确认"
-    for doc_type in FIELD_PRIORITY.get(field, []):
-        val = (partials.get(doc_type) or {}).get(field) or ""
-        if val.strip():
-            return val.strip()
-    for bucket in partials.values():
-        val = bucket.get(field) or ""
-        if val.strip():
-            return val.strip()
+    # 全部分路都没有有效值：留空（不再保留"待确认"占位符）
     return ""
 
 

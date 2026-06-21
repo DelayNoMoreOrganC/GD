@@ -362,9 +362,8 @@ def convert_doc_to_docx(doc_path, docx_path=None):
     if docx_path is None:
         docx_path = doc_path.replace(".doc", ".docx")
 
-    if os.path.exists(docx_path) and os.path.getsize(docx_path) > 5000:
-        return docx_path
-
+    # 不复用持久缓存：旧缓存可能被案件数据污染（Word COM 异常中断时回写）
+    # 每次从源 .doc 重新转换，确保模板干净（Iteration 19 根因修复）
     pythoncom.CoInitialize()
     word = None
     try:
@@ -376,6 +375,12 @@ def convert_doc_to_docx(doc_path, docx_path=None):
         doc.Close(False)
         print(f"[OK] 已转换: {docx_path}")
         return docx_path
+    except Exception as e:
+        # 转换失败时回退到已有缓存（如果有），否则抛出
+        if os.path.exists(docx_path) and os.path.getsize(docx_path) > 5000:
+            print(f"[WARN] .doc→docx 转换失败，使用旧缓存: {e}")
+            return docx_path
+        raise
     finally:
         if word is not None:
             try:

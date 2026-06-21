@@ -73,6 +73,14 @@ def _normalize_spaces(text: str) -> str:
     return s
 
 
+def _normalize_court_terms(text: str) -> str:
+    """将执行裁定书原文中的法院自称「本院」改为第三人称「法院」。
+
+    律所归档以第三人称转述法院行为，摘抄执行裁定书原文时不得保留「本院」。
+    """
+    return (text or "").replace("本院", "法院")
+
+
 def truncate_chinese(text: str, max_len: int = CASE_OUTCOME_MAX_LEN) -> str:
     """按字符数截断（中文按字计）"""
     s = _normalize_spaces(text)
@@ -235,7 +243,7 @@ def format_execution_for_practice(blurb: str, outcome_type: str = "", max_len: i
         return ""
     if len(clause) > max_len:
         clause = truncate_chinese(clause + "。", max_len).rstrip("。")
-    return clause + "。"
+    return _normalize_court_terms(clause) + "。"
 
 
 def _pick_execution_connector(judgment: str, outcome_type: str) -> str:
@@ -268,11 +276,14 @@ def synthesize_outcome_narrative(
     if not j and not e_body:
         return ""
     if not j:
-        return truncate_chinese(e, max_len)
+        return truncate_chinese(_normalize_court_terms(e), max_len)
     if not e_body:
         return truncate_chinese(j + "。", max_len)
     if e_body in j or j in e_body:
-        return truncate_chinese((j if len(j) >= len(e_body) else e_body) + "。", max_len)
+        return truncate_chinese(
+            _normalize_court_terms((j if len(j) >= len(e_body) else e_body) + "。"),
+            max_len,
+        )
 
     if not j.endswith(("。", "；")):
         j = j + "。"
@@ -287,7 +298,7 @@ def synthesize_outcome_narrative(
         merged = j + e_body + "。"
 
     merged = merged.replace("。。", "。").replace("，。", "。")
-    return truncate_chinese(merged, max_len)
+    return truncate_chinese(_normalize_court_terms(merged), max_len)
 
 
 def extract_execution_blurb(pdf_text: str, max_chars: int = 600) -> str:

@@ -18,6 +18,33 @@ LITIGATION_MARKERS = ("民初", "民终", "民再")
 EXECUTION_EXCLUDE = ("执保", "执异", "执复", "执监", "执协", "民函", "仲")
 
 
+# 「待X」占位符：LLM 可能产生各种变体，逐一枚举永远追不完。
+# 用「明确集合 + 两字兜底正则」组合：集合覆盖已知 3~4 字变体，
+# 正则 ^待.$ 只匹配两字占位（待查/待核/待补/待填/待证…），避免误伤真实词（待业人员等）。
+_PLACEHOLDER_PHRASES = frozenset({
+    "待确认", "待确定", "待查证", "待核实", "待补全", "待完善",
+    "待识别", "待提供", "待说明", "待定稿", "待更新", "待录入",
+    "待填写", "待核查", "待查验", "待补充", "待整理",
+})
+_PLACEHOLDER_RE = re.compile(r"^待.$")
+
+
+def is_placeholder_value(val: str) -> bool:
+    """检测值是否是占位符（待确认/待确定/待查/无/未知/暂无/none 等），应留空。"""
+    s = str(val or "").strip()
+    if not s:
+        return True
+    low = s.lower()
+    if low in ("无", "未知", "暂无", "none", "n/a", "na", "/", "-", "—"):
+        return True
+    if s in _PLACEHOLDER_PHRASES:
+        return True
+    # 两字「待X」占位兜底（待查/待核/待补/待填/待证/待定/待录…）
+    if _PLACEHOLDER_RE.match(s):
+        return True
+    return False
+
+
 def extract_case_numbers_from_text(text: str) -> list:
     if not text:
         return []
@@ -33,7 +60,8 @@ def extract_case_numbers_from_text(text: str) -> list:
 
 
 def _normalize_case_no_parens(s: str) -> str:
-    return (s or "").replace("(", "（").replace(")", "）")
+    s = (s or "").replace("(", "（").replace(")", "）")
+    return re.sub(r"\s+", "", s)
 
 
 def _classify_archive_case_no(case_no: str):
@@ -371,7 +399,7 @@ def _normalize_defendant_name(name: str) -> str:
 def normalize_plaintiff_lawyer(text: str) -> str:
     """从「原告律师A、被告律师B」提取本案承办律师（原告侧）。"""
     s = (text or "").strip()
-    if not s or s in ("无", "待确认", "未知"):
+    if not s or is_placeholder_value(s):
         return ""
     m = re.search(r"原告律师[：:]?\s*([^、,，;；\n]+)", s)
     if m:
@@ -411,7 +439,7 @@ def enrich_party_fields(fields: dict) -> dict:
             defendant = df
 
     def _bad(v: str) -> bool:
-        return not v or v in ("待确认", "无", "未知", "暂无")
+        return not v or is_placeholder_value(v)
 
     if _bad(plaintiff) and not _bad(m.get("委托人")):
         # 信用卡/银行案：判决书原告常为发卡行，与委托人一致
@@ -441,21 +469,17 @@ def enrich_party_fields(fields: dict) -> dict:
 
     for src in ("判决书上代理律师", "判决书原告的委托诉讼代理人", "代理律师", "承办律师"):
         v = (m.get(src) or "").strip()
-        if v and v not in ("无", "待确认"):
+        if v and not is_placeholder_value(v):
             clean = normalize_plaintiff_lawyer(v) or v
             m["判决书上代理律师"] = clean
             m["判决书原告的委托诉讼代理人"] = clean
             m.setdefault("承办律师", clean)
             break
 
-    # 非关键字段不把「待确认」写入模板
-    _optional = {
-        "合同号", "备注", "传真", "档案号", "保存年限", "归档日期",
-        "立卷人", "卷内页数", "应收业务费", "已收业务费",
-    }
+    # 所有字段：没把握（待确认/待确定/无/未知/暂无等）一律留空，不写入模板
     for k in list(m.keys()):
         v = str(m.get(k) or "").strip()
-        if v in ("待确认", "无", "未知", "暂无") and k in _optional:
+        if is_placeholder_value(v):
             m[k] = ""
 
     return m

@@ -63,11 +63,7 @@ def get_template_paths():
     names = ["立案审批表", "送达材料清单", "档案卷宗", "结案报告表", "质量监督卡"]
     paths = {}
     for name in names:
-        if name == "立案审批表":
-            p0606 = os.path.join(d, "立案审批表_0606.doc")
-            paths[name] = p0606 if os.path.isfile(p0606) else os.path.join(d, f"{name}.doc")
-        else:
-            paths[name] = os.path.join(d, f"{name}.doc")
+        paths[name] = os.path.join(d, f"{name}.doc")
     return paths
 
 

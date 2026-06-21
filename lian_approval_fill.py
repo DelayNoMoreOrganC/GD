@@ -66,20 +66,22 @@ def _set_kaiti(rng, size_pt: float = SIZE_SIHAO):
 
 
 def _pick_lian_party(base_fields: dict) -> str:
-    from field_sanitize import parse_litigation_parties
+    from field_sanitize import parse_litigation_parties, is_placeholder_value
+
+    client = (base_fields.get("委托人") or base_fields.get("委托人名称") or "").strip()
+    if client and not is_placeholder_value(client):
+        return client
 
     for key in ("判决书中的原告", "起诉状中的原告", "原告", "当事人"):
         raw = (base_fields.get(key) or "").strip()
-        if not raw:
+        if not raw or is_placeholder_value(raw):
             continue
         pl, _ = parse_litigation_parties(raw)
         if pl:
             return pl
-        if key != "当事人" and raw:
+        if key != "当事人":
             return raw
-    client = (base_fields.get("委托人") or base_fields.get("委托人名称") or "").strip()
-    return client
-
+    return ""
 
 def _pick_defendants(base_fields: dict) -> str:
     raw = (base_fields.get("对方当事人") or "").strip()
@@ -126,31 +128,43 @@ def _pad_brief_content(text: str) -> list:
 
 
 def _build_case_brief(base_fields: dict) -> str:
+    from field_sanitize import is_placeholder_value
+
     brief = (base_fields.get("案情简介") or "").strip()
+    if brief and is_placeholder_value(brief):
+        brief = ""
     if not brief:
         party = _pick_defendants(base_fields) or (base_fields.get("对方当事人") or "").strip()
         client = (base_fields.get("委托人") or "").strip()
         target = (base_fields.get("起诉标的") or base_fields.get("标的额") or "").strip()
-        if party and client:
+        ok_party = party and not is_placeholder_value(party)
+        ok_client = client and not is_placeholder_value(client)
+        if ok_party and ok_client:
             target_part = f"，起诉标的{target}元" if target else ""
             brief = f"{party}的贷款逾期，{client}委托我所代理起诉{target_part}"
     content_lines = _pad_brief_content(brief)
     return "\r" + _join_word_lines(content_lines)
 
-
 def expand_lian_fields(base_fields: dict) -> dict:
     bf = dict(base_fields or {})
+    from field_mapping import _is_valid_field_value
+
+    def _cell(val):
+        """取有效值；字段说明/提取要求/占位符一律留空。"""
+        v = (val or "").strip()
+        return v if _is_valid_field_value(v) else ""
+
     return {
         "1": (bf.get("案件类别") or "民事").strip() or "民事",
         "2": "",
-        "3": (bf.get("委托人") or bf.get("委托人名称") or "").strip(),
-        "4": _pick_lian_party(bf),
-        "5": (bf.get("委托人电话") or "").strip(),
+        "3": _cell(bf.get("委托人") or bf.get("委托人名称") or ""),
+        "4": _cell(_pick_lian_party(bf)),
+        "5": _cell(bf.get("委托人电话") or ""),
         "6": _normalize_fee(bf.get("收费标准") or ""),
-        "7": (bf.get("地址") or "").strip(),
-        "8": _pick_defendants(bf) or (bf.get("对方当事人") or "").strip(),
+        "7": _cell(bf.get("地址") or ""),
+        "8": _pick_defendants(bf) or _cell(bf.get("对方当事人") or ""),
         "9": _build_case_brief(bf),
-        "10": (bf.get("收案日期") or bf.get("立案日期") or "").strip(),
+        "10": _cell(bf.get("收案日期") or bf.get("立案日期") or ""),
     }
 
 

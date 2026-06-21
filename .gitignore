@@ -34,3 +34,9 @@ tesseract-installer.exe
 
 # 测试样本（扫描件含真实案件数据 + 1GB+，不入库）
 test_sample/
+
+# Word 运行时转换缓存（.doc→.docx，本地生成，不入库）
+templates_local/
+
+# pytest 缓存
+.pytest_cache/

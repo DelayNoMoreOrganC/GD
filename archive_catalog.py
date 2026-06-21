@@ -143,13 +143,13 @@ MANUAL_KEY_DOC_TYPES = {
 }
 
 
-# 卷末系统模板插入顺序（送达 → 质量监督 → 结案，与 seq 编号无关）
 BACK_SYSTEM_INSERT_ORDER: Dict[str, Tuple[int, ...]] = {
-    "civil": (17, 16, 18),
-    "admin": (17, 16, 18),
-    "criminal": (17, 16, 18),
-    "nonlit": (9, 8, 10),
-    "counsel": (8, 7, 9),
+    # 按目录 seq 升序排列，PDF 物理顺序与卷内目录一致（避免页码颠倒）
+    "civil": (16, 17, 18),
+    "admin": (16, 17, 18),
+    "criminal": (16, 17, 18),
+    "nonlit": (8, 9, 10),
+    "counsel": (7, 8, 9),
 }
 
 # 五类卷内目录 Word 模板（templates/bundled 下，仅填页码格）

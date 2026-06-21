@@ -3,7 +3,7 @@
 """将 LLM 提取字段映射到各 Word 模板中的【占位符】名称"""
 
 from case_outcome import truncate_chinese, CASE_OUTCOME_MAX_LEN
-from field_sanitize import parse_court_document_list
+from field_sanitize import is_placeholder_value, parse_court_document_list
 
 # 送达材料清单：同一占位符在多行各填一份法院文书
 COURT_DOC_PLACEHOLDER = "PDF中落款是法院的所有文件，识别文件抬头"
@@ -86,6 +86,48 @@ def _first_value(base_fields, keys):
         if val is not None and str(val).strip():
             return str(val).strip()
     return ""
+
+
+import re as _re
+
+# 伪值检测：LLM 把字段说明/提取要求当作值返回时，这些特征不会出现在真实数据中
+_REQUIREMENT_TEXT_PATTERNS = (
+    "[从", "[仅", "[格式", "[必须", "[完整", "[优先", "[禁止", "]",  # 方括号指令泄露
+    "提取", "提取落款", "从文档中", "从判决书", "从起诉状", "从委托代理合同",  # 提取指令泄露
+    "如有二审", "禁止只填", "必须综合", "优先判决书",  # 说明性文字泄露
+)
+
+# 字段说明核心词组合（出现在真实值中极不自然的搭配）
+_REQUIREMENT_PHRASES = (
+    "委托代理合同中落款", "原告律师信息", "代理律师信息", "被告信息", "原告信息",
+)
+
+
+def _looks_like_requirement_text(val: str) -> bool:
+    """检测值是否是字段说明/提取要求（而非真实数据），OCR 不准时 LLM 可能回吐指令文字。"""
+    s = str(val or "").strip()
+    if not s:
+        return False
+    # 含方括号指令语法、提取动词、或连续 XXX 占位符
+    for pat in _REQUIREMENT_TEXT_PATTERNS:
+        if pat in s:
+            return True
+    for phrase in _REQUIREMENT_PHRASES:
+        if phrase in s:
+            return True
+    if _re.search(r"XXX{2,}", s):
+        return True
+    return False
+
+
+def _is_valid_field_value(val: str) -> bool:
+    """值有效：非空、非占位符（待确认/待确定等）、非字段说明文字。"""
+    s = str(val or "").strip()
+    if not s or is_placeholder_value(s):
+        return False
+    return not _looks_like_requirement_text(s)
+
+
 
 
 CASE_PROJECT_PLACEHOLDER = "判决书内的（原告XXX诉被告XXXAAA一案）"
@@ -207,7 +249,7 @@ def expand_fields_for_template(template_name, base_fields):
             ):
                 continue
             val = _first_value(base_fields, source_keys)
-            if val and str(val).strip() not in ("待确认", "无", "未知", "暂无"):
+            if _is_valid_field_value(val):
                 result[placeholder] = val
 
     # 案情简介类长占位符
@@ -224,7 +266,7 @@ def expand_fields_for_template(template_name, base_fields):
             val = _build_client_contact(base_fields)
         else:
             val = _first_value(base_fields, source_keys)
-        if val:
+        if _is_valid_field_value(val):
             result[placeholder] = val
 
     # 送达材料清单：法院文书按行各填一项（不整表重复同一串）
