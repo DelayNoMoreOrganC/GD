@@ -108,6 +108,22 @@ class FieldUpdate(BaseModel):
     outcome_type: str = "auto"
 
 
+
+
+class AssembleRequest(BaseModel):
+    order_mode: str = "catalog"
+    skipped: list[int] = Field(default_factory=list)
+
+
+class RegenerateRequest(BaseModel):
+    fields: dict[str, Any] = Field(default_factory=dict)
+    outcome_type: str = "auto"
+
+
+class FieldsPatch(BaseModel):
+    fields: dict[str, Any]
+
+
 # ---- Settings ----
 class SystemSettings(BaseModel):
     deepseek_api_key: str = ""

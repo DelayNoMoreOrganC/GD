@@ -665,6 +665,7 @@ def generate_system_templates(
     log=print,
     *,
     issues_out: Optional[List[str]] = None,
+    work_dir: Optional[str] = None,
 ) -> Dict[str, str]:
     """WF4：根据字段生成 source=system 的 docx 模板（失败不抛异常）
 
@@ -678,10 +679,13 @@ def generate_system_templates(
 
     try:
         output_root = get_outputs_dir()
-        work_dir = os.path.join(
-            output_root, f"_analyze_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        )
-        os.makedirs(work_dir, exist_ok=True)
+        if work_dir:
+            os.makedirs(work_dir, exist_ok=True)
+        else:
+            work_dir = os.path.join(
+                output_root, f"_analyze_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            )
+            os.makedirs(work_dir, exist_ok=True)
 
         for item in catalog:
             if item.source != "system" or not item.templates:

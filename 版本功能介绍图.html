@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>案件归档系统 · 版本功能介绍 V3 / V4 / V5</title>
+<title>案件归档系统 · 版本功能介绍 V3 / V4 / V5 / V6</title>
 <style>
 :root{
   --ink:#0f172a; --ink2:#334155; --muted:#64748b; --line:#e2e8f0; --bg:#f8fafc;
-  --v3:#0ea5e9; --v3d:#0369a1; --v4:#10b981; --v4d:#047857; --v5:#f59e0b; --v5d:#b45309;
+  --v3:#0ea5e9; --v3d:#0369a1; --v4:#10b981; --v4d:#047857; --v5:#f59e0b; --v5d:#b45309; --v6:#8b5cf6; --v6d:#6d28d9;
   --card:#ffffff;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -37,7 +37,8 @@ section .lead{color:var(--muted);margin-bottom:30px;font-size:15px}
 .ver-card .top{padding:22px 22px 18px;color:#fff}
 .v3 .top{background:linear-gradient(135deg,#0ea5e9,#0369a1)}
 .v4 .top{background:linear-gradient(135deg,#10b981,#047857)}
-.v5 .top{background:linear-gradient(135deg,#f59e0b,#b45309);padding-right:110px}
+.v5 .top{background:linear-gradient(135deg,#f59e0b,#b45309)}
+.v6 .top{background:linear-gradient(135deg,#8b5cf6,#6d28d9);padding-right:110px}
 .ver-card .badge{font-size:13px;opacity:.9;font-weight:600}
 .ver-card .top h3{font-size:24px;font-weight:800;margin-top:4px}
 .ver-card .top .sub{font-size:13px;opacity:.85;margin-top:6px}
@@ -48,14 +49,14 @@ section .lead{color:var(--muted);margin-bottom:30px;font-size:15px}
 .ver-card li{font-size:13.5px;color:var(--ink2);padding:6px 0 6px 22px;position:relative;border-bottom:1px dashed var(--line)}
 .ver-card li:last-child{border-bottom:none}
 .ver-card li::before{content:"✓";position:absolute;left:0;color:var(--v4);font-weight:800}
-.v3 li::before{color:var(--v3)} .v5 li::before{color:var(--v5)}
+.v3 li::before{color:var(--v3)} .v5 li::before{color:var(--v5)} .v6 li::before{color:var(--v6)}
 .ver-card .foot{margin-top:12px;font-size:12.5px;color:var(--muted);font-style:italic}
-.best{position:absolute;top:14px;right:14px;z-index:2;background:#fff;color:#b45309;font-size:11px;font-weight:800;padding:4px 10px;border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.15)}
+.best{position:absolute;top:14px;right:14px;z-index:2;background:#fff;color:#6d28d9;font-size:11px;font-weight:800;padding:4px 10px;border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.15)}
 
 /* ===== Evolution timeline ===== */
 .timeline{position:relative;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:30px}
-.tl-track{display:grid;grid-template-columns:repeat(3,1fr);gap:0;position:relative}
-.tl-track::before{content:"";position:absolute;top:20px;left:8%;right:8%;height:3px;background:linear-gradient(90deg,var(--v3),var(--v4),var(--v5));border-radius:3px}
+.tl-track{display:grid;grid-template-columns:repeat(4,1fr);gap:0;position:relative}
+.tl-track::before{content:"";position:absolute;top:20px;left:6%;right:6%;height:3px;background:linear-gradient(90deg,var(--v3),var(--v4),var(--v5),var(--v6));border-radius:3px}
 .tl-node{text-align:center;position:relative;padding-top:50px}
 .tl-node .ring{position:absolute;top:6px;left:50%;transform:translateX(-50%);width:30px;height:30px;border-radius:50%;background:#fff;border:4px solid;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px}
 .tl-node.n1 .ring{border-color:var(--v3);color:var(--v3)}
@@ -124,20 +125,21 @@ footer b{color:#cbd5e1}
 <header class="hero">
   <div class="wrap">
     <span class="eyebrow">CASE ARCHIVE SYSTEM</span>
-    <h1>案件归档系统 · 三代演进</h1>
-    <p>从「桌面单机填表」到「一键完整归档」，再到「Web 协同平台」——三代产品解决同一件事：把扫描 PDF 自动变成合规的律师业务档案卷宗。</p>
+    <h1>案件归档系统 · 四代演进</h1>
+    <p>从「桌面单机填表」到「一键完整归档」，再到「Web 协同平台」，V6 进一步加入<strong style="color:#c4b5fd">合并前预览核对与浏览器内 Word 编辑</strong>。</p>
     <div class="ver-pills">
       <span class="pill">V3 · <b>桌面填表</b></span>
       <span class="pill">V4 · <b>完整归档引擎</b></span>
       <span class="pill">V5 · <b>Web 协同平台</b></span>
+      <span class="pill">V6 · <b>预览核对 + 在线编辑</b></span>
     </div>
   </div>
 </header>
 
 <!-- ========== 三版本概览 ========== -->
 <section class="wrap">
-  <h2><span class="dot"></span>三代版本，各做什么</h2>
-  <p class="lead">三版并非互相替代，而是能力的层层叠加：V4 在 V3 基础上长出「完整归档」能力，V5 又把 V4 的引擎搬上 Web。</p>
+  <h2><span class="dot"></span>四代版本，各做什么</h2>
+  <p class="lead">四版层层叠加：V4 长出完整归档，V5 搬上 Web，V6 在合并 PDF 前增加人工核对与 Word 在线编辑。</p>
   <div class="ver-grid">
 
     <div class="ver-card v3">
@@ -182,7 +184,6 @@ footer b{color:#cbd5e1}
     </div>
 
     <div class="ver-card v5">
-      <span class="best">当前版本</span>
       <div class="top">
         <div class="badge">Web 平台 · 协同版</div>
         <h3>V5</h3>
@@ -197,9 +198,29 @@ footer b{color:#cbd5e1}
           <li>浏览器登录 → 建案 → 上传 → 一键生成 → 下载</li>
           <li>多用户多组织，案件与成果集中留存、随时回下载</li>
           <li>WebSocket 实时进度日志，全过程透明可见</li>
-          <li>去除百度 OCR / 本地 MinerU，仅用 MinerU 云 API</li>
         </ul>
-        <div class="foot">一台服务器，全团队共用</div>
+        <div class="foot">一键生成后直接出 PDF，无合并前人工闸门</div>
+      </div>
+    </div>
+
+    <div class="ver-card v6">
+      <span class="best">当前版本</span>
+      <div class="top">
+        <div class="badge">Web 平台 · 核对版</div>
+        <h3>V6</h3>
+        <div class="sub">预览核对 · 浏览器内改 Word</div>
+      </div>
+      <div class="body">
+        <div class="form">
+          <span class="tag">待核对闸门</span><span class="tag">Word 在线编辑</span><span class="tag">A4 预览</span>
+        </div>
+        <ul>
+          <li>分析完成后暂停于「待核对」，合并 PDF 前可人工把关</li>
+          <li>5 份系统表在浏览器内直接编辑内容与格式</li>
+          <li>保存后确认合并；已完成任务可从案件页再次预览编辑</li>
+          <li>继承 V5 全部能力（多用户、实时进度、成果留存）</li>
+        </ul>
+        <div class="foot">V5 + 人机协同闸门，降低系统表差错风险</div>
       </div>
     </div>
 
@@ -228,8 +249,13 @@ footer b{color:#cbd5e1}
           <h4>搬上网，团队共用</h4>
           <p>把 V4 引擎包进 Web 平台，多人登录、集中存储、实时进度，局域网内任意电脑浏览器即可使用。</p>
         </div>
+        <div class="tl-node n4">
+          <div class="ring" style="border-color:var(--v6);color:var(--v6)">V6</div>
+          <h4>合并前可核对、可改表</h4>
+          <p>分析完成后进入待核对，浏览器内编辑 5 份 Word 系统表，确认无误再合并 PDF；已完成归档也可回看编辑。</p>
+        </div>
       </div>
-      <span class="tl-arrow">核心结论：<b>V5 = V4 的引擎 + Web 的协同</b>，不重写算法，只换了交付方式。</span>
+      <span class="tl-arrow">核心结论：<b>V6 = V5 的 Web 协同 + 预览核对闸门 + 在线 Word 编辑</b>。</span>
     </div>
   </div>
 </section>
@@ -240,21 +266,32 @@ footer b{color:#cbd5e1}
   <p class="lead">一目了然看清三代能力的差异。</p>
   <div class="cmp-wrap">
     <table class="cmp">
-      <thead><tr><th>能力项</th><th>V3 桌面填表</th><th>V4 完整归档</th><th>V5 Web 平台</th></tr></thead>
+      <thead><tr><th>能力项</th><th>V3</th><th>V4</th><th>V5</th><th>V6</th></tr></thead>
       <tbody>
-        <tr><td>交付形态</td><td>Windows EXE</td><td>Windows EXE</td><td>浏览器 Web 应用</td></tr>
-        <tr><td>5 份系统表自动填充</td><td class="yes">有</td><td class="yes">有</td><td class="yes">有</td></tr>
-        <tr><td>文书级切分 + 目录映射</td><td class="no">无</td><td class="yes">有</td><td class="yes">有（复用 V4）</td></tr>
-        <tr><td>完整卷宗 PDF 一键生成</td><td class="no">无</td><td class="yes">有</td><td class="yes">有</td></tr>
-        <tr><td>源 PDF 页守恒保证</td><td class="no">—</td><td class="yes">有</td><td class="yes">有</td></tr>
-        <tr><td>批量处理多案件</td><td class="yes">有</td><td class="partial">个案优先</td><td class="partial">案件化管理</td></tr>
-        <tr><td>多用户 / 登录鉴权</td><td class="no">无</td><td class="no">无</td><td class="yes">有（JWT）</td></tr>
-        <tr><td>历史成果留存 / 回下载</td><td class="no">本地文件</td><td class="no">本地文件</td><td class="yes">平台集中存储</td></tr>
-        <tr><td>实时进度可视化</td><td class="partial">简单进度</td><td class="partial">简单进度</td><td class="yes">WebSocket 日志流</td></tr>
-        <tr><td>使用门槛</td><td>装软件、配环境</td><td>装软件、配环境</td><td class="yes">打开浏览器即可</td></tr>
-        <tr><td>部署 / 共享方式</td><td>单机</td><td>单机</td><td class="yes">一台服务器服务全团队</td></tr>
+        <tr><td>5 份系统表自动填充</td><td class="yes">有</td><td class="yes">有</td><td class="yes">有</td><td class="yes">有</td></tr>
+        <tr><td>完整卷宗 PDF 一键生成</td><td class="no">无</td><td class="yes">有</td><td class="yes">有</td><td class="yes">有</td></tr>
+        <tr><td>Web 多用户 / 成果留存</td><td class="no">无</td><td class="no">无</td><td class="yes">有</td><td class="yes">有</td></tr>
+        <tr><td>合并前预览核对闸门</td><td class="no">无</td><td class="partial">桌面确认</td><td class="no">无</td><td class="yes">有</td></tr>
+        <tr><td>浏览器内 Word 编辑</td><td class="no">无</td><td class="no">无</td><td class="no">无</td><td class="yes">有</td></tr>
+        <tr><td>已完成归档回看编辑</td><td class="no">无</td><td class="no">无</td><td class="no">无</td><td class="yes">有</td></tr>
       </tbody>
     </table>
+  </div>
+</section>
+
+<!-- ========== V6 操作流程 ========== -->
+<section style="background:#eef2f6">
+  <div class="wrap">
+    <h2><span class="dot" style="background:var(--v6)"></span>V6 怎么用 · 核对再合并</h2>
+    <p class="lead">在 V5 六步流程基础上，生成后增加「待核对 → 编辑 → 确认合并」环节。</p>
+    <div class="flow">
+      <div class="step"><div class="num">1</div><div class="ico">⚡</div><h5>一键生成</h5><p>OCR、切分、填表自动完成</p></div>
+      <div class="step"><div class="num">2</div><div class="ico">⏸️</div><h5>待核对</h5><p>任务暂停，进入预览编辑页</p></div>
+      <div class="step"><div class="num">3</div><div class="ico">📝</div><h5>编辑 Word</h5><p>5 张系统表浏览器内修改</p></div>
+      <div class="step"><div class="num">4</div><div class="ico">💾</div><h5>保存</h5><p>保存当前或全部表格</p></div>
+      <div class="step"><div class="num">5</div><div class="ico">✅</div><h5>确认合并</h5><p>核对无误后合并 PDF</p></div>
+      <div class="step"><div class="num">6</div><div class="ico">⬇️</div><h5>下载</h5><p>PDF / DOCX / ZIP</p></div>
+    </div>
   </div>
 </section>
 
@@ -328,7 +365,7 @@ footer b{color:#cbd5e1}
 </section>
 
 <footer>
-  案件归档系统 · V3 → V4 → V5 &nbsp;|&nbsp; <b>核心不变，体验进阶</b>
+  案件归档系统 · V3 → V4 → V5 → V6 &nbsp;|&nbsp; <b>核心不变，体验进阶</b>
 </footer>
 
 </body>

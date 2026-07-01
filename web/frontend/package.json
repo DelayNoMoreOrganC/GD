@@ -1,7 +1,7 @@
 {
-  "name": "archive-v5-frontend",
+  "name": "archive-v6-frontend",
   "private": true,
-  "version": "5.0.0",
+  "version": "6.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,12 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vue": "^3.4.0",
-    "vue-router": "^4.3.0",
-    "pinia": "^2.1.0",
-    "element-plus": "^2.7.0",
+    "@eigenpal/docx-editor-vue": "^1.9.0",
     "@element-plus/icons-vue": "^2.3.0",
-    "axios": "^1.7.0"
+    "axios": "^1.7.0",
+    "element-plus": "^2.7.0",
+    "pinia": "^2.1.0",
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",

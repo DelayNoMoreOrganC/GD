@@ -15,6 +15,7 @@
               <div style="font-size: 12px; color: #909399">完成时间: {{ fmtDate(t.finished_at) }}</div>
             </div>
             <div>
+              <el-button size="small" type="warning" :icon="Edit" @click="goReview(t.id)">预览编辑</el-button>
               <el-button size="small" type="primary" :icon="Download" @click="downloadTask(t.id, 'archive')">PDF</el-button>
               <el-button size="small" :icon="Document" @click="downloadTask(t.id, 'docx')">DOCX</el-button>
               <el-button size="small" :icon="Files" @click="downloadTask(t.id, 'zip')">ZIP</el-button>
@@ -89,7 +90,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { UploadFilled, Delete, MagicStick, Download, Document, Files, CircleCheckFilled } from '@element-plus/icons-vue'
+import { UploadFilled, Delete, MagicStick, Download, Document, Files, CircleCheckFilled, Edit } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '../api/client'
 
@@ -123,6 +124,10 @@ function downloadTask(taskId: number, kind: string) {
   document.body.appendChild(a)
   a.click()
   document.body.removeChild(a)
+}
+
+function goReview(taskId: number) {
+  router.push('/cases/' + caseId + '/tasks/' + taskId + '?review=1')
 }
 
 async function loadDocTypes() {

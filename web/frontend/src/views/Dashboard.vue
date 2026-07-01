@@ -110,8 +110,8 @@ async function onDeleteCase(row: any) {
 }
 
 function typeLabel(v: string) { return types.find(t => t.value === v)?.label || v }
-function statusLabel(v: string) { return { pending: '等待', running: '进行中', done: '完成', failed: '失败' }[v] || v }
-function statusType(v: string) { return { pending: 'info', running: 'warning', done: 'success', failed: 'danger' }[v] || 'info' }
+function statusLabel(v: string) { return { pending: '等待', running: '进行中', awaiting_review: '待核对', done: '完成', failed: '失败' }[v] || v }
+function statusType(v: string) { return { pending: 'info', running: 'warning', awaiting_review: 'warning', done: 'success', failed: 'danger' }[v] || 'info' }
 function fmtDate(v: string) { return v ? v.replace('T', ' ').slice(0, 16) : '' }
 
 onMounted(load)

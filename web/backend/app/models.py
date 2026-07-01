@@ -37,6 +37,7 @@ class Role(str, enum.Enum):
 class TaskStatus(str, enum.Enum):
     pending = "pending"
     running = "running"
+    awaiting_review = "awaiting_review"
     done = "done"
     failed = "failed"
 
