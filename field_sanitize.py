@@ -28,6 +28,19 @@ _PLACEHOLDER_PHRASES = frozenset({
 })
 _PLACEHOLDER_RE = re.compile(r"^待.$")
 
+# LLM 把字段说明/提取要求当作值返回时的特征
+_REQUIREMENT_TEXT_PATTERNS = (
+    "[从", "[仅", "[格式", "[必须", "[完整", "[优先", "[禁止",
+    "提取", "提取落款", "从文档中", "从判决书", "从起诉状", "从委托代理合同",
+    "从授权", "中提取", "填写", "格式要求", "字体格式", "行距",
+    "如有二审", "禁止只填", "必须综合", "优先判决书", "sheet1", "Sheet1",
+    "根据判决书", "匹配最相近",
+)
+_REQUIREMENT_PHRASES = (
+    "委托代理合同中落款", "原告律师信息", "代理律师信息", "被告信息", "原告信息",
+    "起诉状中起诉标的", "所有字体格式要求",
+)
+
 
 def is_placeholder_value(val: str) -> bool:
     """检测值是否是占位符（待确认/待确定/待查/无/未知/暂无/none 等），应留空。"""
@@ -43,6 +56,34 @@ def is_placeholder_value(val: str) -> bool:
     if _PLACEHOLDER_RE.match(s):
         return True
     return False
+
+
+def looks_like_requirement_text(val: str) -> bool:
+    """检测值是否为字段说明/提取要求（非真实数据）。"""
+    s = str(val or "").strip()
+    if not s:
+        return False
+    for pat in _REQUIREMENT_TEXT_PATTERNS:
+        if pat in s:
+            return True
+    for phrase in _REQUIREMENT_PHRASES:
+        if phrase in s:
+            return True
+    if re.search(r"XXX{2,}", s):
+        return True
+    if re.search(r"从.{0,12}中提取", s):
+        return True
+    if len(s) > 60 and any(k in s for k in ("提取", "填写", "格式", "优先", "禁止", "必须")):
+        return True
+    return False
+
+
+def is_valid_field_value(val: str) -> bool:
+    """值有效：非空、非占位符、非字段说明文字。"""
+    s = str(val or "").strip()
+    if not s or is_placeholder_value(s):
+        return False
+    return not looks_like_requirement_text(s)
 
 
 def extract_case_numbers_from_text(text: str) -> list:
@@ -328,9 +369,12 @@ def sanitize_all_field_values(fields: dict) -> dict:
     out = {}
     for k, v in fields.items():
         if isinstance(v, str):
-            out[k] = sanitize_field_value(v)
+            s = sanitize_field_value(v)
+            if not is_valid_field_value(s):
+                s = ""
+            out[k] = s
         elif isinstance(v, (list, tuple)):
-            out[k] = [sanitize_field_value(x) for x in v if str(x).strip()]
+            out[k] = [sanitize_field_value(x) for x in v if is_valid_field_value(str(x))]
         else:
             out[k] = v
     return out
@@ -476,10 +520,10 @@ def enrich_party_fields(fields: dict) -> dict:
             m.setdefault("承办律师", clean)
             break
 
-    # 所有字段：没把握（待确认/待确定/无/未知/暂无等）一律留空，不写入模板
+    # 所有字段：没把握（待确认/说明文字/提取要求）一律留空，不写入模板
     for k in list(m.keys()):
         v = str(m.get(k) or "").strip()
-        if is_placeholder_value(v):
+        if is_placeholder_value(v) or looks_like_requirement_text(v):
             m[k] = ""
 
     return m

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>V5 界面截图素材（汇报用）</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:"PingFang SC","Microsoft YaHei",sans-serif;background:#e5e7eb;padding:24px;display:flex;flex-wrap:wrap;gap:20px}
+.shot{width:520px;background:#fff;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.12);overflow:hidden}
+.shot-label{background:#0f172a;color:#fff;padding:8px 14px;font-size:13px;font-weight:600}
+/* login */
+.login-bg{background:linear-gradient(135deg,#1d2129,#2a3548);padding:48px 24px;display:flex;justify-content:center}
+.login-card{background:#fff;border-radius:4px;padding:28px 24px;width:280px}
+.login-card h2{text-align:center;font-size:18px;margin-bottom:20px;color:#1d2129}
+.fg{margin-bottom:14px}
+.fg label{display:block;font-size:12px;color:#606266;margin-bottom:4px}
+.fg input{width:100%;padding:8px 10px;border:1px solid #dcdfe6;border-radius:4px;font-size:13px}
+.btn-pri{width:100%;padding:10px;background:#409eff;color:#fff;border:none;border-radius:4px;font-size:14px;margin-top:6px}
+/* table page */
+.page{padding:16px}
+.ph{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.ph h3{font-size:16px}
+.btn-sm{padding:6px 14px;background:#409eff;color:#fff;border:none;border-radius:4px;font-size:12px}
+table.dt{width:100%;border-collapse:collapse;font-size:12px}
+table.dt th{background:#f5f7fa;padding:8px;text-align:left;border-bottom:1px solid #ebeef5;color:#909399}
+table.dt td{padding:8px;border-bottom:1px solid #ebeef5}
+.tag{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px}
+.tag-ok{background:#f0f9eb;color:#67c23a}
+.tag-run{background:#fdf6ec;color:#e6a23c}
+/* upload */
+.card{border:1px solid #ebeef5;border-radius:4px;margin-bottom:10px}
+.card-h{padding:10px 14px;border-bottom:1px solid #ebeef5;font-weight:600;font-size:13px}
+.card-b{padding:14px}
+.alert{background:#ecf5ff;border:1px solid #d9ecff;color:#409eff;padding:8px 12px;border-radius:4px;font-size:11px;margin-bottom:10px;line-height:1.5}
+.upload-zone{border:2px dashed #dcdfe6;border-radius:6px;padding:28px;text-align:center;color:#909399;font-size:12px}
+.upload-zone em{color:#409eff;font-style:normal}
+/* progress */
+.prog-bar{height:8px;background:#ebeef5;border-radius:4px;overflow:hidden;margin:8px 0}
+.prog-fill{height:100%;background:#409eff;border-radius:4px}
+.log-box{background:#1e1e1e;color:#d4d4d4;font-family:Consolas,monospace;font-size:10px;padding:10px;height:120px;overflow:hidden;line-height:1.6}
+/* fields */
+.field-table{width:100%;border-collapse:collapse;font-size:11px}
+.field-table th,.field-table td{border:1px solid #ebeef5;padding:6px 8px}
+.field-table th{background:#f5f7fa}
+/* download */
+.result-ok{text-align:center;padding:20px}
+.result-ok .ico{font-size:40px;color:#67c23a;margin-bottom:8px}
+.result-ok h4{font-size:16px;margin-bottom:4px}
+.result-ok p{font-size:12px;color:#909399;margin-bottom:14px}
+.dl-btns{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.dl-btns button{padding:8px 14px;border-radius:4px;font-size:12px;border:1px solid #dcdfe6;background:#fff}
+.dl-btns .pri{background:#409eff;color:#fff;border-color:#409eff}
+</style>
+</head>
+<body>
+
+<div class="shot" id="shot-login">
+  <div class="shot-label">1 · 登录</div>
+  <div class="login-bg">
+    <div class="login-card">
+      <h2>案件归档系统</h2>
+      <div class="fg"><label>用户名</label><input value="admin" readonly></div>
+      <div class="fg"><label>密码</label><input type="password" value="••••••••" readonly></div>
+      <button class="btn-pri">登录</button>
+    </div>
+  </div>
+</div>
+
+<div class="shot" id="shot-dashboard">
+  <div class="shot-label">2 · 案件列表</div>
+  <div class="page">
+    <div class="ph"><h3>案件管理</h3><button class="btn-sm">+ 新建案件</button></div>
+    <table class="dt">
+      <tr><th>案件名称</th><th>类型</th><th>文件数</th><th>最近任务</th><th>操作</th></tr>
+      <tr><td>2014-兴泰贸易</td><td>民事</td><td>1</td><td><span class="tag tag-ok">完成</span></td><td><button class="btn-sm" style="background:#fff;color:#606266;border:1px solid #dcdfe6">打开</button></td></tr>
+      <tr><td>2019-佛山金百纳</td><td>民事</td><td>1</td><td><span class="tag tag-run">进行中</span></td><td><button class="btn-sm" style="background:#fff;color:#606266;border:1px solid #dcdfe6">打开</button></td></tr>
+      <tr><td>2024-左红贵</td><td>民事</td><td>3</td><td><span class="tag tag-ok">完成</span></td><td><button class="btn-sm" style="background:#fff;color:#606266;border:1px solid #dcdfe6">打开</button></td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="shot" id="shot-upload">
+  <div class="shot-label">3 · 上传文件</div>
+  <div class="page">
+    <div class="card">
+      <div class="card-h">归档文件</div>
+      <div class="card-b">
+        <div class="alert">路径A（单卷综合）：只上传1个PDF，选「默认（综合文档）」</div>
+        <div class="upload-zone">拖拽 PDF 到此处，或<em>点击上传</em></div>
+        <table class="dt" style="margin-top:10px">
+          <tr><th>文件名</th><th>类型</th><th>大小</th></tr>
+          <tr><td>2014-兴泰贸易.pdf</td><td>默认（综合文档）</td><td>4521 KB</td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h">生成归档</div>
+      <div class="card-b">
+        <button class="btn-pri">一键生成完整归档</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="shot" id="shot-progress">
+  <div class="shot-label">4 · 实时进度</div>
+  <div class="page">
+    <div class="card">
+      <div class="card-b">
+        <div style="font-size:12px;color:#606266;margin-bottom:4px">正在生成文书</div>
+        <div class="prog-bar"><div class="prog-fill" style="width:62%"></div></div>
+        <div style="font-size:11px;color:#909399">62% · 正在填充 Word 模板</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h">实时日志</div>
+      <div class="card-b" style="padding:0">
+        <div class="log-box">
+[OCR] MinerU 识别完成，共 80 页<br>
+[切分] 识别 10 份文书，覆盖 80/80 页<br>
+[映射] 目录命中 14/18 项<br>
+[字段] DeepSeek 提取 32 个字段<br>
+[模板] 正在填充立案审批表…<br>
+[模板] 正在填充送达材料清单…
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="shot" id="shot-fields">
+  <div class="shot-label">5 · 字段详情</div>
+  <div class="page">
+    <div class="card">
+      <div class="card-h">查看已提取的字段值</div>
+      <div class="card-b">
+        <table class="field-table">
+          <tr><th>字段名</th><th>提取值</th></tr>
+          <tr><td>委托人</td><td>兴泰贸易有限公司</td></tr>
+          <tr><td>对方当事人</td><td>某某建设集团</td></tr>
+          <tr><td>案由</td><td>买卖合同纠纷</td></tr>
+          <tr><td>受理法院</td><td>广州市天河区人民法院</td></tr>
+          <tr><td>案号</td><td>（2014）穗天法民二初字第 xxx 号</td></tr>
+          <tr><td>承办律师</td><td>张律师、李律师</td></tr>
+        </table>
+        <p style="font-size:11px;color:#909399;margin-top:10px">修改字段后可重填模板，无需重新 OCR</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="shot" id="shot-download">
+  <div class="shot-label">6 · 下载成果</div>
+  <div class="page">
+    <div class="card">
+      <div class="card-b">
+        <div class="result-ok">
+          <div class="ico">✓</div>
+          <h4>归档完成</h4>
+          <p>归档结果长期保存在该案件下，可随时返回查看</p>
+          <div class="dl-btns">
+            <button class="pri">下载完整归档 PDF</button>
+            <button>下载 Word 文书</button>
+            <button>下载全部(ZIP)</button>
+          </div>
+        </div>
+        <table class="dt" style="margin-top:12px;font-size:11px">
+          <tr><td>任务编号</td><td>#12</td><td>目录命中</td><td>14 / 18</td></tr>
+          <tr><td>提取字段</td><td>32 个</td><td>页守恒</td><td>80 / 80</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

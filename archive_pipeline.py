@@ -30,7 +30,12 @@ from settings import (
     parse_llm_output,
 )
 from archive_ocr import extract_pdf_text, get_pdf_page_count
-from case_outcome import ensure_outcome_covers_execution, unify_case_outcome_fields
+from case_outcome import (
+    build_outcome_from_units,
+    detect_outcome_warnings,
+    ensure_outcome_covers_execution,
+    unify_case_outcome_fields,
+)
 from pdf_text_chunk import build_pdf_chunk_for_llm
 from document_segmenter import (
     DOC_TYPE_COMPLAINT,
@@ -161,6 +166,14 @@ def _deepseek_chat(user_content: str, system_content: str, *, max_retries: int =
             continue
 
         if parsed:
+            from field_sanitize import is_valid_field_value
+
+            cleaned = {}
+            for k, v in parsed.items():
+                sv = "" if v is None else str(v).strip()
+                if is_valid_field_value(sv):
+                    cleaned[k] = sv
+            parsed = cleaned
             empty_critical = [
                 f for f in _CRITICAL_FIELDS
                 if not parsed.get(f) or str(parsed[f]).strip() in ("", "待确认")
@@ -259,7 +272,7 @@ def extract_fields_auto(pdf_text, segmented=None, log=print):
     return extract_fields_with_deepseek(pdf_text)
 
 
-def normalize_fields(raw, pdf_text=""):
+def normalize_fields(raw, pdf_text="", doc_spans=None, page_texts_by_path=None):
     if not raw:
         return {}
     from field_sanitize import enrich_party_fields
@@ -303,8 +316,14 @@ def normalize_fields(raw, pdf_text=""):
     doc_list = parse_court_document_list(str(docs_raw))
     if doc_list:
         m["法院文件清单"] = "、".join(doc_list)
-    m = ensure_outcome_covers_execution(m, pdf_text)
+    # V6：seq14/15 unit 规则合成优先于 LLM 归纳
+    if doc_spans is not None and page_texts_by_path:
+        m = build_outcome_from_units(m, doc_spans, page_texts_by_path, pdf_text)
+    m = ensure_outcome_covers_execution(m, pdf_text, units=doc_spans)
     m = unify_case_outcome_fields(m)
+    warnings = detect_outcome_warnings(m, doc_spans, pdf_text)
+    if warnings:
+        m["_outcome_warnings"] = warnings
     return sanitize_all_field_values(m)
 
 
@@ -516,6 +535,25 @@ def compute_found_seqs(catalog, doc_spans, generated_templates):
     return found_seqs
 
 
+def compute_missing_items(case_type: str, catalog, found_seqs) -> List[Dict]:
+    """按有效目录（可选 seq15 等）计算缺失项。"""
+    import archive_catalog as ac
+
+    found_set = set(found_seqs)
+    effective = ac.get_effective_catalog(case_type, found_set)
+    missing_items = []
+    for item in effective:
+        if item.seq not in found_set:
+            missing_items.append({
+                "seq": item.seq,
+                "name": item.name,
+                "source": item.source,
+                "doc_types": item.doc_types,
+                "manual_key": item.manual_key,
+            })
+    return missing_items
+
+
 @dataclass
 class ArchiveAnalysis:
     """归档分析结果（阶段1：analyze_archive）"""
@@ -528,6 +566,7 @@ class ArchiveAnalysis:
     missing_items: List[Dict]  # 缺失项列表 [{"seq": int, "name": str, "source": str}, ...]
     low_confidence_items: List[Dict] = field(default_factory=list)  # J-2 低置信度切分段
     template_issues: List[str] = field(default_factory=list)  # WF4 系统模板残留占位符/空字段
+    outcome_warnings: List[str] = field(default_factory=list)  # V6 审办结果低置信预警
 
 
 def _normalize_archive_sources(
@@ -634,7 +673,8 @@ def generate_system_templates(
     """
     generated_templates: Dict[str, str] = {}
     if not fields:
-        return generated_templates
+        log("       [WARN] 字段为空，仍生成系统模板（占位符可能保留，需人工补填）")
+        log("       [HINT] 若刚部署 V5，请确认「系统设置」已填写 DeepSeek API Key")
 
     try:
         output_root = get_outputs_dir()
@@ -720,7 +760,30 @@ def analyze_archive(
     if config is None:
         config = load_config()
 
-    # 验证 case_type
+    from settings import pop_config, push_config
+
+    push_config(config)
+    try:
+        return _analyze_archive_impl(
+            case_type,
+            original_pdf,
+            config,
+            sources=sources,
+            log=log,
+        )
+    finally:
+        pop_config()
+
+
+def _analyze_archive_impl(
+    case_type: str,
+    original_pdf: Optional[str] = None,
+    config: Optional[Dict] = None,
+    *,
+    sources: Optional[List] = None,
+    log=print,
+) -> ArchiveAnalysis:
+    """analyze_archive 实际实现（在 push_config 作用域内调用）。"""
     if case_type not in ac.CASE_TYPE_LABELS:
         raise ValueError(f"Unknown case_type: {case_type}. Valid: {list(ac.CASE_TYPE_LABELS.keys())}")
 
@@ -790,7 +853,9 @@ def analyze_archive(
         try:
             segmented = build_segmented_text(source_texts=source_texts).segments
             raw_fields = extract_fields_auto(pdf_text, segmented=segmented, log=log)
-            fields = normalize_fields(raw_fields, pdf_text)
+            fields = normalize_fields(
+                raw_fields, pdf_text, doc_spans=doc_spans, page_texts_by_path=page_texts_by_path
+            )
         except Exception as e:
             log(f"       [WARN] 分路字段提取失败: {e}")
             fields = {}
@@ -801,16 +866,29 @@ def analyze_archive(
                 raw_fields = extract_fields_auto(
                     pdf_text, segmented=segmented, log=log
                 )
-                fields = normalize_fields(raw_fields, pdf_text)
+                fields = normalize_fields(
+                    raw_fields, pdf_text, doc_spans=doc_spans, page_texts_by_path=page_texts_by_path
+                )
             except Exception as e:
                 log(f"       [WARN] 分路字段提取失败: {e}")
                 fields = extract_fields_from_text(pdf_text, log=log)
         else:
             fields = extract_fields_from_text(pdf_text, log=log)
+    outcome_warnings = list(fields.pop("_outcome_warnings", None) or [])
+    if outcome_warnings:
+        for w in outcome_warnings:
+            log(f"       [WARN] 审办结果: {w}")
     if fields:
         log(f"       提取到 {len(fields)} 个字段")
     elif not pdf_text:
         log("       [SKIP] 无 PDF 文本，跳过字段提取")
+    else:
+        log("       [WARN] 字段提取结果为空")
+        ds_key = (config or {}).get("deepseek", {}).get("api_key", "")
+        if not str(ds_key).strip():
+            log("       [HINT] DeepSeek API Key 未配置，请到 V5「系统设置」填写")
+        else:
+            log("       [HINT] 请检查 DeepSeek 网络连通性与 OCR 文本质量")
 
     template_issues: List[str] = []
     generated_templates = generate_system_templates(
@@ -818,21 +896,9 @@ def analyze_archive(
     )
 
     log("[4/4] 缺失项核对...")
-    # 计算已找到的目录序号
+    # 计算缺失项（V6：无执行案不将 seq15 计为缺失）
     found_seqs = compute_found_seqs(catalog, doc_spans, generated_templates)
-
-    # 计算缺失项
-    missing_items = []
-    found_seq_set = set(found_seqs)  # 确保是集合
-    for item in catalog:
-        if item.seq not in found_seq_set:
-            missing_items.append({
-                "seq": item.seq,
-                "name": item.name,
-                "source": item.source,
-                "doc_types": item.doc_types,
-                "manual_key": item.manual_key,
-            })
+    missing_items = compute_missing_items(case_type, catalog, found_seqs)
 
     log(f"       已找到: {len(found_seqs)} 项")
     log(f"       缺失: {len(missing_items)} 项")
@@ -855,6 +921,7 @@ def analyze_archive(
         missing_items=missing_items,
         low_confidence_items=low_confidence_items,
         template_issues=template_issues,
+        outcome_warnings=outcome_warnings,
     )
 
 
@@ -868,19 +935,8 @@ def recompute_found_and_missing(analysis: "ArchiveAnalysis") -> "ArchiveAnalysis
 
     catalog = ac.get_catalog(analysis.case_type)
     found_seqs = compute_found_seqs(catalog, analysis.doc_spans, analysis.generated_templates)
-    found_set = set(found_seqs)
-    missing_items = []
-    for item in catalog:
-        if item.seq not in found_set:
-            missing_items.append({
-                "seq": item.seq,
-                "name": item.name,
-                "source": item.source,
-                "doc_types": item.doc_types,
-                "manual_key": item.manual_key,
-            })
     analysis.found_seqs = found_seqs
-    analysis.missing_items = missing_items
+    analysis.missing_items = compute_missing_items(analysis.case_type, catalog, found_seqs)
     return analysis
 
 

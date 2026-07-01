@@ -325,13 +325,15 @@ def _generate_toc_pdf(
     page.insert_text((460, y), "页码", fontname="china-s", fontsize=11)
     y += 24
 
-    line_height = 20
+    line_height = 16
+    max_y = 800
     for idx, (name, page_num) in enumerate(entries, start=1):
-        if y > 780:
-            page = doc.new_page(width=595, height=842)
+        if y > max_y:
+            # 超出单页：缩小行距继续在同一页绘制，不再新增页
+            line_height = max(12, line_height - 2)
             y = 72
-        page.insert_text((72, y), f"{idx}. {name[:38]}", fontname="china-s", fontsize=10)
-        page.insert_text((460, y), str(page_num), fontname="china-s", fontsize=10)
+        page.insert_text((72, y), f"{idx}. {name[:38]}", fontname="china-s", fontsize=9)
+        page.insert_text((460, y), str(page_num), fontname="china-s", fontsize=9)
         y += line_height
 
     return doc
@@ -409,10 +411,37 @@ def _insert_system_template(
     docx_path = generated_templates[template_name]
     # template_pdfs: {docx_path -> 临时 PDF 路径}（位于 scratch 目录，转换成功才有值）
     tmp_pdf = template_pdfs.get(docx_path)
-    if tmp_pdf and os.path.isfile(tmp_pdf) and insert_pdf_pages(merger, tmp_pdf):
+    if not tmp_pdf or not os.path.isfile(tmp_pdf):
+        log(f"  [WARN] 系统模板 PDF 转换失败: {template_name}")
+        return False
+
+    try:
+        from output_options import TEMPLATE_PAGE_BUDGET
+
+        max_pages = TEMPLATE_PAGE_BUDGET.get(template_name)
+    except ImportError:
+        max_pages = None
+
+    if max_pages and fitz is not None:
+        try:
+            src = fitz.open(tmp_pdf)
+            actual = src.page_count
+            src.close()
+            if actual > max_pages:
+                log(
+                    f"  [WARN] {template_name} PDF {actual} 页，按预算仅插入前 {max_pages} 页"
+                )
+                if insert_pdf_pages(merger, tmp_pdf, 0, max_pages - 1):
+                    log(f"  [系统模板] seq{item.seq}: {item.name} → {template_name}")
+                    return True
+                return False
+        except Exception:
+            pass
+
+    if insert_pdf_pages(merger, tmp_pdf):
         log(f"  [系统模板] seq{item.seq}: {item.name} → {template_name}")
         return True
-    log(f"  [WARN] 系统模板 PDF 转换失败: {template_name}")
+    log(f"  [WARN] 系统模板 PDF 插入失败: {template_name}")
     return False
 
 
@@ -536,7 +565,14 @@ def build_full_archive(
     if docx_to_pdf_func is None:
         docx_to_pdf_func = docx_to_pdf
 
-    catalog = ac.get_catalog(case_type)
+    catalog_full = ac.get_catalog(case_type)
+    found_from_spans = {
+        getattr(u, "catalog_seq", None)
+        for u in (doc_spans or [])
+        if getattr(u, "catalog_seq", None) is not None
+    }
+    catalog = ac.get_effective_catalog(case_type, found_from_spans)
+    catalog_toc = ac.get_effective_catalog(case_type, found_from_spans, for_toc=True)
     manual_doc_types = getattr(ac, "MANUAL_KEY_DOC_TYPES", {})
     back_system_seqs = set(ac.get_back_system_seqs(case_type))
     front_system_seqs = {0, 1}
@@ -556,7 +592,7 @@ def build_full_archive(
 
     template_pdfs = {}  # {docx_path -> 临时 PDF 路径}
     convert_pairs = []
-    for item in catalog:
+    for item in catalog_full:
         if item.source != "system" or not item.templates:
             continue
         template_name = item.templates[0]
@@ -578,7 +614,7 @@ def build_full_archive(
             if ok_map.get(docx_path):
                 template_pdfs[docx_path] = tmp_pdf
 
-    catalog_by_seq = {item.seq: item for item in catalog}
+    catalog_by_seq = {item.seq: item for item in catalog_full}
 
     def _mark_section_start(seq: int, before_pages: int):
         if body.page_count > before_pages:
@@ -708,7 +744,7 @@ def build_full_archive(
 
     # 生成卷内目录并拼装：封面 + 目录 + 其余（卷内目录中间件放 scratch，避免污染输出目录）
     toc_doc, toc_page_count = _build_toc_doc(
-        catalog, body_starts, cover_end_idx, case_type, scratch, log=log
+        catalog_toc, body_starts, cover_end_idx, case_type, scratch, log=log
     )
 
     merger = fitz.open()

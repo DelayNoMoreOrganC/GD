@@ -54,6 +54,71 @@ def _safe_word_quit(word):
         pass
 
 
+def _page_count(doc) -> int:
+    try:
+        return int(doc.ComputeStatistics(2))
+    except Exception:
+        return 0
+
+
+def _fit_catalog_one_page(doc, log=print) -> None:
+    """将卷内目录 Word 表格压缩到 1 页内。"""
+    target = 1
+    before = _page_count(doc)
+    if before <= target:
+        return
+
+    WD_LINE_EXACTLY = 4
+    WD_ROW_AT_LEAST = 1
+    steps = ((10.5, 13.0), (9.0, 11.5), (8.0, 10.5), (7.0, 9.5), (6.5, 8.5))
+
+    for font_pt, line_pt in steps:
+        try:
+            for ti in range(1, doc.Tables.Count + 1):
+                table = doc.Tables(ti)
+                for ri in range(1, table.Rows.Count + 1):
+                    row = table.Rows(ri)
+                    for ci in range(1, row.Cells.Count + 1):
+                        rng = row.Cells(ci).Range
+                        try:
+                            rng.Font.Size = font_pt
+                            for pi in range(1, rng.Paragraphs.Count + 1):
+                                pf = rng.Paragraphs(pi).Format
+                                pf.LineSpacingRule = WD_LINE_EXACTLY
+                                pf.LineSpacing = line_pt
+                                pf.SpaceBefore = 0
+                                pf.SpaceAfter = 0
+                        except Exception:
+                            pass
+                    try:
+                        row.HeightRule = WD_ROW_AT_LEAST
+                        row.Height = max(8.0, line_pt + 1)
+                        row.AllowBreakAcrossPages = False
+                    except Exception:
+                        pass
+            for si in range(1, doc.Sections.Count + 1):
+                ps = doc.Sections(si).PageSetup
+                for attr, val in (
+                    ("TopMargin", 50),
+                    ("BottomMargin", 50),
+                    ("LeftMargin", 50),
+                    ("RightMargin", 50),
+                ):
+                    try:
+                        setattr(ps, attr, val)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        after = _page_count(doc)
+        if after <= target:
+            log(f"       [OK] 卷内目录 {before}→{after} 页（缩字 {font_pt}pt）")
+            return
+
+    log(f"       [WARN] 卷内目录仍 {_page_count(doc)} 页（目标 1 页）")
+
+
 def _fill_table_pages(doc, catalog, display_pages: Dict[int, int], log=print) -> int:
     """填充目录表页码列：优先按序号列匹配 catalog seq，其次按名称模糊匹配"""
     filled = 0
@@ -171,6 +236,7 @@ def fill_catalog_template(
         if n == 0:
             log("       [WARN] 卷内目录表格未填入任何页码")
             return None
+        _fit_catalog_one_page(doc, log=log)
         out_abs = os.path.abspath(output_docx)
         if out_abs.lower().endswith(".docx"):
             doc.SaveAs2(out_abs, FileFormat=16)

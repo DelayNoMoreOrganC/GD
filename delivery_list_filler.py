@@ -98,6 +98,13 @@ def word_fill_delivery_list(doc, field_data, output_path):
         doc, "送达材料清单", blacken_fn=_blacken_range, field_patch=normal
     )
 
+    try:
+        from template_page_fit import fit_document_to_page_budget
+
+        fit_document_to_page_budget(doc, "送达材料清单")
+    except Exception as ex:
+        print(f"  [WARN] 送达清单页数预算压缩跳过: {ex}")
+
     out_abs = os.path.abspath(output_path)
     os.makedirs(os.path.dirname(out_abs) or ".", exist_ok=True)
     doc.SaveAs2(out_abs, FileFormat=WD_FORMAT_DOCX)

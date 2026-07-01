@@ -144,10 +144,10 @@ MANUAL_KEY_DOC_TYPES = {
 
 
 BACK_SYSTEM_INSERT_ORDER: Dict[str, Tuple[int, ...]] = {
-    # 按目录 seq 升序排列，PDF 物理顺序与卷内目录一致（避免页码颠倒）
-    "civil": (16, 17, 18),
-    "admin": (16, 17, 18),
-    "criminal": (16, 17, 18),
+    # V6/G2：金标准卷末为质量监督卡(16)→结案报告(18)，无 seq17 送达页
+    "civil": (16, 18),
+    "admin": (16, 18),
+    "criminal": (16, 18),
     "nonlit": (8, 9, 10),
     "counsel": (7, 8, 9),
 }
@@ -175,6 +175,42 @@ def get_back_system_seqs(case_type: str) -> Tuple[int, ...]:
     if order is None:
         raise ValueError(f"Unknown case_type: {case_type}")
     return order
+
+
+# V6：无执行材料时可从目录/卷内目录省略的 seq
+OPTIONAL_CATALOG_SEQS: Dict[str, Tuple[int, ...]] = {
+    "civil": (15,),
+    "admin": (15,),
+    "criminal": (15,),
+}
+
+# 金标准：送达清单(seq17)不作为卷内目录正文行展示
+TOC_EXCLUDE_SEQS: Dict[str, Tuple[int, ...]] = {
+    "civil": (17,),
+    "admin": (17,),
+    "criminal": (17,),
+}
+
+
+def get_effective_catalog(
+    case_type: str,
+    found_seqs: Optional[set] = None,
+    *,
+    for_toc: bool = False,
+) -> List[CatalogItem]:
+    """按 found_seqs 裁剪可选目录项；卷内目录可排除 seq17。"""
+    catalog = get_catalog(case_type)
+    optional = set(OPTIONAL_CATALOG_SEQS.get(case_type, ()))
+    exclude = set(TOC_EXCLUDE_SEQS.get(case_type, ())) if for_toc else set()
+    if found_seqs is not None:
+        found = set(found_seqs)
+        catalog = [
+            item for item in catalog
+            if item.seq not in optional or item.seq in found
+        ]
+    if exclude:
+        catalog = [item for item in catalog if item.seq not in exclude]
+    return catalog
 
 
 def get_catalog(case_type: str) -> List[CatalogItem]:

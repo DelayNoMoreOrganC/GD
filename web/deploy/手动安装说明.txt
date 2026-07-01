@@ -1,0 +1,82 @@
+案件归档 V5 — 手动安装（install.bat 无反应时用）
+
+========================================
+一、确认解压结构
+========================================
+解压后当前文件夹里应能看到：
+  install.bat
+  start_server.bat
+  app\web\backend\run.py
+
+若没有 app 文件夹，说明解压层级不对，请重新解压。
+
+========================================
+二、安装 Python（若未安装）
+========================================
+1. 下载 Python 3.12 或 3.14：https://www.python.org/downloads/
+2. 安装时务必勾选：Add python.exe to PATH
+3. 打开「命令提示符」(cmd)，输入：python --version
+   应显示版本号。若提示找不到，改用：py -3 --version
+
+========================================
+三、方法一：PowerShell 安装（推荐）
+========================================
+1. 在解压目录空白处按住 Shift + 右键 ->「在此处打开 PowerShell 窗口」
+2. 执行：
+
+   powershell -ExecutionPolicy Bypass -File install.ps1
+
+3. 等待 pip 安装完成，浏览器打开 http://127.0.0.1:8000
+
+========================================
+四、方法二：命令行手动安装
+========================================
+1. Win+R 输入 cmd 回车
+2. 进入解压目录，例如：
+
+   cd /d D:\ArchiveV5
+
+3. 安装依赖：
+
+   python -m pip install --upgrade pip
+   python -m pip install -r app\web\backend\requirements.txt
+
+   若 python 不可用，改用：
+
+   py -3 -m pip install -r app\web\backend\requirements.txt
+
+   若下载慢，加国内镜像：
+
+   python -m pip install -r app\web\backend\requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+4. 启动服务：
+
+   cd app\web\backend
+   python run.py
+
+5. 浏览器访问 http://127.0.0.1:8000
+
+========================================
+五、方法三：用「打开安装窗口.bat」
+========================================
+双击「打开安装窗口.bat」（不是 install.bat）
+会弹出黑色窗口并保持不关，便于看到报错。
+
+========================================
+六、登录账号
+========================================
+管理员：admin / admin123
+律师：  zgls / zgls123
+
+首次登录后在「系统设置」填写 DeepSeek API Key 和 MinerU Token。
+
+========================================
+七、常见 install.bat 无反应原因
+========================================
+1. 窗口闪退 — 用「打开安装窗口.bat」或 cmd 手动执行
+2. 未装 Python 或未加入 PATH
+3. 解压路径含特殊字符 — 建议放到 D:\ArchiveV5
+4. 杀毒软件拦截 — 临时允许该目录
+5. 从网盘下载的 zip 被锁定 — 右键 zip -> 属性 -> 解除锁定
+
+安装失败请查看同目录下的 install.log，把最后几行报错发给技术支持。

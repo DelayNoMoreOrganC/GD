@@ -13,6 +13,15 @@ ALL_TEMPLATES = (
     "质量监督卡",
 )
 
+# 各模板生成 PDF 时的页数预算（质量监督卡含委托人须知 + 质量监督卡，共 2 页）
+TEMPLATE_PAGE_BUDGET = {
+    "档案卷宗": 1,
+    "结案报告表": 1,
+    "立案审批表": 1,
+    "送达材料清单": 1,
+    "质量监督卡": 2,
+}
+
 
 def normalize_output_options(options=None) -> dict:
     """返回 {mode, templates}"""

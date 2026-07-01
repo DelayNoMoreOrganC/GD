@@ -85,3 +85,94 @@ def test_zhiben_practice_template():
     clause = co.format_execution_for_practice(blurb, "zhiben")
     assert "终结本次执行" in clause
     assert "查封" in clause or "拍卖" in clause
+
+
+def test_extract_judgment_operative_strips_appeal():
+    text = (
+        "民事判决书\n判决如下：\n"
+        "一、被告向原告偿还借款本金100万元及利息；\n"
+        "二、案件受理费由被告负担。\n"
+        "如不服本判决，可以在判决书送达之日起十五日内上诉。\n"
+        "审判员 张三"
+    )
+    out = co.extract_judgment_operative(text)
+    assert "借款" in out
+    assert "如不服" not in out
+    assert out.startswith("法院判决")
+
+
+def test_extract_judgment_operative_mediation():
+    text = (
+        "民事调解书\n调解协议内容如下：\n"
+        "被告分期偿还原告货款50万元。\n"
+        "本调解书经双方当事人签收后生效。"
+    )
+    out = co.extract_judgment_operative(text)
+    assert "货款" in out or "偿还" in out
+
+
+def test_no_forced_zhiben_without_execution_units():
+    fields = {"结案小结": "法院判决被告偿还借款。", "审（办）结果": "法院判决被告偿还借款。"}
+    pdf_text = "民事判决书……判决被告偿还借款。执行裁定书……终结本次执行程序。"
+    units = []
+    out = co.ensure_outcome_covers_execution(fields, pdf_text, units=units)
+    assert "终结本次" not in out["结案小结"], out["结案小结"]
+
+
+def test_detect_outcome_warning_fake_zhiben():
+    fields = {"结案小结": "法院判决偿还借款。执行过程中，无财产可供执行，终结本次执行程序。"}
+    warnings = co.detect_outcome_warnings(fields, units=[], pdf_text="")
+    assert any("seq15" in w or "执行文书" in w for w in warnings)
+
+
+def test_build_outcome_from_units_judgment_only():
+    class _U:
+        def __init__(self, seq, path="a.pdf", sp=0, ep=0):
+            self.catalog_seq = seq
+            self.source_path = path
+            self.start_page = sp
+            self.end_page = ep
+
+    j_text = "民事判决书\n判决如下：\n被告向原告支付货款30万元。\n如不服本判决"
+    pages = {"a.pdf": [j_text]}
+    units = [_U(14)]
+    fields = co.build_outcome_from_units(
+        {"结案小结": "错误归纳"},
+        units,
+        {"a.pdf": [j_text]},
+    )
+    assert "货款" in fields.get("结案小结", "")
+    assert "终结本次" not in fields.get("结案小结", "")
+
+
+def test_build_outcome_from_units_with_execution():
+    class _U:
+        def __init__(self, seq, path="a.pdf", sp=0, ep=0):
+            self.catalog_seq = seq
+            self.source_path = path
+            self.start_page = sp
+            self.end_page = ep
+
+    j_text = "民事判决书\n判决如下：\n被告向原告偿还借款。\n如不服"
+    e_text = "执行裁定书……无其他可供执行财产，终结本次执行程序。"
+    units = [_U(14, sp=0, ep=0), _U(15, sp=1, ep=1)]
+    page_texts = {"a.pdf": [j_text, e_text]}
+    fields = co.build_outcome_from_units({}, units, page_texts)
+    out = fields.get("结案小结", "")
+    assert "偿还" in out
+    assert "终结本次" in out or "执行" in out
+
+
+def test_apply_outcome_type_none_strips_execution():
+    fields = {
+        "结案小结": "法院判决被告偿还借款。执行过程中，无财产可供执行，终结本次执行程序。",
+    }
+    out = co.apply_outcome_type_override(fields, "none")
+    assert "终结本次" not in out["结案小结"]
+    assert "偿还" in out["结案小结"]
+
+
+def test_apply_outcome_type_withdraw():
+    fields = {"结案小结": "法院判决被告支付货款。"}
+    out = co.apply_outcome_type_override(fields, "withdraw")
+    assert "撤回" in out["结案小结"]

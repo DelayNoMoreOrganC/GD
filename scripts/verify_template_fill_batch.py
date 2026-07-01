@@ -31,6 +31,10 @@ SLOT_RULES = {
         "判决书上的原告": lambda v: v and "原告" not in v[:4] and "，" not in v,
         "判决书上代理律师": lambda v: v and v not in ("无", "待确认"),
     },
+    "结案报告表": {
+        "结案小结": lambda v: v and len(v) >= 10 and "待确认" not in v,
+        "审（办）结果": lambda v: v and len(v) >= 10,
+    },
     "立案审批表": {
         "3": lambda v: v and "原告" not in v and "待确认" not in v,
         "4": lambda v: v and "原告" not in v[:4] and "被告" not in v,

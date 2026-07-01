@@ -431,12 +431,126 @@ def _ensure_special_execution(m: dict, pdf_text: str) -> dict:
     return _set_outcome(m, merged)
 
 
-def _ensure_general_execution(m: dict, pdf_text: str) -> dict:
+def extract_judgment_operative(text: str) -> str:
+    """从判决书 OCR 文本规则抽取主文（判决如下 → 如不服/落款）。"""
+    if not text:
+        return ""
+    raw = text.replace("\r", "\n")
+    start = -1
+    for marker in ("判决如下", "裁定如下", "调解协议内容如下", "裁判结果如下"):
+        idx = raw.find(marker)
+        if idx >= 0:
+            start = idx + len(marker)
+            break
+    if start < 0:
+        return ""
+    rest = raw[start:]
+    end = len(rest)
+    for em in (
+        "如不服本判决", "如不服本裁定", "如不服", "审判员", "审判长",
+        "书记员", "本判决为终审判决", "本案受理费", "案件受理费",
+    ):
+        idx = rest.find(em)
+        if idx > 15:
+            end = min(end, idx)
+    body = _normalize_spaces(rest[:end])
+    if len(body) < 6:
+        return ""
+    return _polish_judgment_clause(body)
+
+
+def collect_units_text(units, page_texts_by_path, target_seqs) -> str:
+    """按 catalog_seq 收集 unit 页文本（V6：seq14 判决 / seq15 执行）。"""
+    if not units or not page_texts_by_path:
+        return ""
+    target = set(target_seqs or [])
+    chunks = []
+    for u in units:
+        seq = getattr(u, "catalog_seq", None)
+        if seq not in target:
+            continue
+        path = getattr(u, "source_path", "") or ""
+        pages = page_texts_by_path.get(path) or []
+        sp = getattr(u, "start_page", None)
+        ep = getattr(u, "end_page", None)
+        if pages and sp is not None and ep is not None:
+            chunk = "\n".join(
+                (pages[i] or "").strip()
+                for i in range(sp, min(ep, len(pages) - 1) + 1)
+            ).strip()
+            if chunk:
+                chunks.append(chunk)
+    return "\n\n".join(chunks)
+
+
+def has_execution_units(units=None, pdf_text: str = "") -> bool:
+    """是否存在执行文书 unit（seq15 或 doc_type=execution）。"""
+    if units:
+        for u in units:
+            if getattr(u, "catalog_seq", None) == 15:
+                return True
+            if getattr(u, "doc_type", "") == "execution":
+                return True
+    return False
+
+
+def build_outcome_from_units(fields: dict, units, page_texts_by_path, pdf_text: str = "") -> dict:
+    """V6：规则优先 — 从 seq14/15 unit 文本合成审办结果，覆盖 LLM 乱归纳。"""
+    if not fields:
+        fields = {}
+    m = dict(fields)
+    j_raw = collect_units_text(units, page_texts_by_path, {14})
+    e_raw = collect_units_text(units, page_texts_by_path, {15})
+
+    j_part = extract_judgment_operative(j_raw)
+    if not j_part and j_raw:
+        j_part = _polish_judgment_clause(j_raw[:1200])
+
+    e_clause = ""
+    if e_raw:
+        e_type = classify_execution_outcome(e_raw)
+        e_clause = format_execution_for_practice(e_raw, e_type)
+
+    if not j_part and not e_clause:
+        return m
+
+    if j_part and e_clause:
+        merged = synthesize_outcome_narrative(j_part, e_clause)
+    elif j_part:
+        merged = truncate_chinese(j_part if j_part.endswith("。") else j_part + "。")
+    else:
+        merged = truncate_chinese(e_clause)
+
+    if merged:
+        return _set_outcome(m, merged)
+    return m
+
+
+def detect_outcome_warnings(fields: dict, units=None, pdf_text: str = "") -> list:
+    """低置信度预警（供 V5 Web 展示）。"""
+    warnings = []
+    text = pick_best_outcome_text(fields)
+    if not text:
+        warnings.append("未提取到审办结果/结案小结，请人工填写")
+        return warnings
+    if not text.startswith(("法院判决", "法院裁定", "经调解")):
+        warnings.append("审办结果未以「法院判决」等规范起句，建议核对")
+    has_exec = has_execution_units(units, pdf_text)
+    if ("终结本次" in text or "执行完毕" in text) and not has_exec:
+        warnings.append("表述含执行终结，但卷内未识别到执行文书（seq15），请核对")
+    if has_exec and "执行" not in text and "终本" not in text:
+        warnings.append("卷内已有执行文书，但审办结果未写执行情况，建议补充")
+    return warnings
+
+
+def _ensure_general_execution(m: dict, pdf_text: str, units=None) -> dict:
     """常规终本兜底（仅在没有特殊终结事由时使用）。"""
     text = pick_best_outcome_text(m)
     if not text:
         return m
     if _outcome_exec_score(text) >= 2:
+        return m
+    if not has_execution_units(units, pdf_text):
         return m
     if not pdf_text:
         return m
@@ -461,7 +575,7 @@ def _ensure_general_execution(m: dict, pdf_text: str) -> dict:
     return _set_outcome(m, merged)
 
 
-def polish_outcome_for_practice(fields: dict, pdf_text: str = "") -> dict:
+def polish_outcome_for_practice(fields: dict, pdf_text: str = "", units=None) -> dict:
     """终稿润色：规范判决起句、按执行结果类型改写表述、重新合成。"""
     if not fields:
         return fields
@@ -473,8 +587,9 @@ def polish_outcome_for_practice(fields: dict, pdf_text: str = "") -> dict:
     j_part, e_part = _split_judgment_execution(text)
     j_part = _polish_judgment_clause(j_part)
 
-    pdf_type = classify_execution_outcome(pdf_text) if pdf_text else ""
-    if not e_part and pdf_text and pdf_type not in ("", "generic"):
+    allow_pdf_exec = has_execution_units(units, pdf_text)
+    pdf_type = classify_execution_outcome(pdf_text) if pdf_text and allow_pdf_exec else ""
+    if not e_part and allow_pdf_exec and pdf_text and pdf_type not in ("", "generic"):
         if not _text_covers_outcome_type(text, pdf_type):
             blurb = extract_special_execution_blurb(pdf_text) or extract_execution_blurb(pdf_text)
             if blurb:
@@ -498,18 +613,47 @@ def polish_outcome_for_practice(fields: dict, pdf_text: str = "") -> dict:
     return _set_outcome(m, merged)
 
 
-def ensure_outcome_covers_execution(fields: dict, pdf_text: str = "") -> dict:
+def apply_outcome_type_override(fields: dict, outcome_type: str, pdf_text: str = "") -> dict:
+    """Web 重填时按用户选择的执行结果类型改写表述。"""
+    if not fields or not outcome_type or outcome_type == "auto":
+        return fields
+    m = dict(fields)
+    text = pick_best_outcome_text(m)
+    if not text:
+        return m
+    j_part, e_part = _split_judgment_execution(text)
+    j_part = _polish_judgment_clause(j_part) if j_part else text.rstrip("。；，")
+
+    if outcome_type == "none":
+        merged = truncate_chinese(j_part + "。" if j_part else text)
+        return _set_outcome(m, merged)
+
+    blurb = e_part or pdf_text[:800] if pdf_text else e_part or text
+    e_clause = format_execution_for_practice(blurb, outcome_type)
+    if not e_clause:
+        return m
+    if j_part:
+        merged = synthesize_outcome_narrative(j_part, e_clause)
+    else:
+        merged = truncate_chinese(e_clause)
+    return _set_outcome(m, merged)
+
+
+def ensure_outcome_covers_execution(fields: dict, pdf_text: str = "", units=None) -> dict:
     """
     1. 特殊终结事由优先补写（破产/和解/撤回等）
-    2. 无特殊事由时再补常规终本
+    2. 无特殊事由时再补常规终本（须有执行 unit）
     3. 终稿按法律实务润色合成
     """
     if not fields:
         return fields
     m = dict(fields)
-    m = _ensure_special_execution(m, pdf_text)
-    m = _ensure_general_execution(m, pdf_text)
-    m = polish_outcome_for_practice(m, pdf_text)
+    if units is not None and has_execution_units(units, pdf_text):
+        m = _ensure_special_execution(m, pdf_text)
+    elif units is None:
+        m = _ensure_special_execution(m, pdf_text)
+    m = _ensure_general_execution(m, pdf_text, units=units)
+    m = polish_outcome_for_practice(m, pdf_text, units=units)
     return m
 
 

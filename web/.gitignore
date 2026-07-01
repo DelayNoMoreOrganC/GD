@@ -1,0 +1,9 @@
+node_modules/
+frontend/dist/
+data/
+.env
+__pycache__/
+*.pyc
+*.log
+*.err
+db.sqlite3

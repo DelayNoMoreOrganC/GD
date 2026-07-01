@@ -4,11 +4,27 @@
 
 import json
 import os
+import threading
 
 from app_paths import get_config_path, init_config_if_missing
 
+_config_override = threading.local()
+
+
+def push_config(config: dict | None) -> None:
+    """临时注入运行时配置（V5 Web 从 SQLite 传入，覆盖 config.json）。"""
+    _config_override.value = config
+
+
+def pop_config() -> None:
+    if hasattr(_config_override, "value"):
+        del _config_override.value
+
 
 def load_config():
+    override = getattr(_config_override, "value", None)
+    if override is not None:
+        return _merge_defaults(dict(override))
     init_config_if_missing()
     path = get_config_path()
     if not os.path.exists(path):

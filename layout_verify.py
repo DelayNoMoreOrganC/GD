@@ -36,8 +36,14 @@ def verify_template(name: str, filled_path: str, field_data=None) -> list:
         try:
             tpl_pages = tpl.ComputeStatistics(2)
             out_pages = out.ComputeStatistics(2)
-            if out_pages > tpl_pages:
-                errors.append(f"页数超出模板: 模板{tpl_pages} -> 输出{out_pages}")
+            try:
+                from output_options import TEMPLATE_PAGE_BUDGET
+
+                page_budget = TEMPLATE_PAGE_BUDGET.get(name, tpl_pages)
+            except ImportError:
+                page_budget = tpl_pages
+            if out_pages > page_budget:
+                errors.append(f"页数超出预算: 预算{page_budget}页 -> 输出{out_pages}页")
 
             errors.extend(compare_table_geometry(tpl, out))
 

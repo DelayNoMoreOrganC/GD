@@ -371,6 +371,7 @@ def build_segmented_from_units(
     page_texts_by_path: Optional[Dict[str, List[str]]] = None,
 ) -> Dict[str, str]:
     """从 WF2 doc_spans + 页文本构建分路提取用 segments（路径 A 单卷）。"""
+    by_seq = build_segmented_from_units_by_seq(units, page_texts_by_path)
     segments: Dict[str, str] = {}
     page_texts_by_path = page_texts_by_path or {}
     for u in units or []:
@@ -389,7 +390,53 @@ def build_segmented_from_units(
         if not chunk:
             continue
         segments[dt] = (segments.get(dt, "") + "\n\n" + chunk).strip()
+    # V6：catalog_seq 14/15 优先覆盖 judgment/execution 分路
+    if by_seq.get(DOC_TYPE_JUDGMENT):
+        segments[DOC_TYPE_JUDGMENT] = by_seq[DOC_TYPE_JUDGMENT]
+    if by_seq.get(DOC_TYPE_EXECUTION):
+        segments[DOC_TYPE_EXECUTION] = by_seq[DOC_TYPE_EXECUTION]
     return segments
+
+
+def build_segmented_from_units_by_seq(
+    units,
+    page_texts_by_path: Optional[Dict[str, List[str]]] = None,
+) -> Dict[str, str]:
+    """按 catalog_seq 14/15 定向取判决/执行文本（V6 字段分路）。"""
+    page_texts_by_path = page_texts_by_path or {}
+    out: Dict[str, str] = {}
+
+    def _chunk_unit(u) -> str:
+        path = getattr(u, "source_path", "") or ""
+        pages = page_texts_by_path.get(path) or []
+        sp = getattr(u, "start_page", None)
+        ep = getattr(u, "end_page", None)
+        if not pages or sp is None or ep is None:
+            return ""
+        return "\n".join(
+            (pages[i] or "").strip()
+            for i in range(sp, min(ep, len(pages) - 1) + 1)
+        ).strip()
+
+    j_parts, e_parts = [], []
+    for u in units or []:
+        seq = getattr(u, "catalog_seq", None)
+        c = _chunk_unit(u)
+        if not c:
+            continue
+        if seq == 14:
+            j_parts.append(c)
+        elif seq == 15:
+            e_parts.append(c)
+        elif getattr(u, "doc_type", "") == DOC_TYPE_EXECUTION and not e_parts:
+            e_parts.append(c)
+        elif getattr(u, "doc_type", "") in (DOC_TYPE_JUDGMENT, DOC_TYPE_MEDIATION, DOC_TYPE_RULING) and not j_parts:
+            j_parts.append(c)
+    if j_parts:
+        out[DOC_TYPE_JUDGMENT] = "\n\n".join(j_parts)
+    if e_parts:
+        out[DOC_TYPE_EXECUTION] = "\n\n".join(e_parts)
+    return out
 
 
 def build_segmented_text(
