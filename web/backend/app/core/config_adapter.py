@@ -1,32 +1,46 @@
-"""Build the V4 config dict from V5 system settings (DB Setting table)."""
+"""Build the V4 config dict from per-account API settings."""
 from __future__ import annotations
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Setting
+from ..models import Role, Setting, User, UserSetting
+from ..config import get_settings
 
 
 DEFAULTS: dict[str, str] = {
     "deepseek_api_key": "",
     "deepseek_base_url": "https://api.deepseek.com",
-    "deepseek_model": "deepseek-chat",
+    "deepseek_model": "deepseek-v4-flash",
     "mineru_api_token": "",
     "order_mode": "catalog",
 }
 
 
-async def load_all_settings(db: AsyncSession) -> dict[str, str]:
-    result = await db.execute(select(Setting))
-    rows = {r.key: r.value for r in result.scalars().all()}
+async def load_user_settings(db: AsyncSession, user_id: str) -> dict[str, str]:
+    """Load one account's settings without falling back to another account."""
+    result = await db.execute(select(UserSetting).where(UserSetting.user_id == user_id))
+    user_rows = result.scalars().all()
+    rows = {r.key: r.value for r in user_rows}
+
+    # Preserve an existing installation's global configuration for the admin
+    # account only. Ordinary accounts always start from clean defaults.
+    if not user_rows:
+        user_result = await db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalar_one_or_none()
+        if user and user.role == Role.admin:
+            legacy_result = await db.execute(select(Setting))
+            rows.update({r.key: r.value for r in legacy_result.scalars().all()})
+
     merged = dict(DEFAULTS)
     merged.update(rows)
     return merged
 
 
-async def build_v4_config(db: AsyncSession) -> dict:
-    """Translate V5 system settings into the config dict V4 modules expect."""
-    s = await load_all_settings(db)
+async def build_v4_config(db: AsyncSession, user_id: str) -> dict:
+    """Translate V6 account settings into the config dict core modules expect."""
+    s = await load_user_settings(db, user_id)
+    preview_only = get_settings().preview_only
     return {
         "ocr": {
             "engine": "mineru_api",
@@ -53,6 +67,7 @@ async def build_v4_config(db: AsyncSession) -> dict:
         "output": {
             "custom_path": "",
             "docx_only": False,
+            "preview_only": preview_only,
         },
         "fill": {
             "mode": "textbox",

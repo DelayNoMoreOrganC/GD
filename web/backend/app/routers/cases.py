@@ -72,7 +72,19 @@ async def get_case(case_id: str, user=Depends(get_current_user), db=Depends(get_
     for t in all_tasks.scalars().all():
         if t.status.value == "done":
             from ..schemas import TaskBriefOut
-            done_task_list.append(TaskBriefOut(id=t.id, status=t.status.value, finished_at=t.finished_at.isoformat() if t.finished_at else None, output_pdf=t.output_pdf or ""))
+            has_docx = bool(
+                t.output_docx_dir
+                and os.path.isdir(t.output_docx_dir)
+                and any(name.lower().endswith(".docx") for name in os.listdir(t.output_docx_dir))
+            )
+            done_task_list.append(TaskBriefOut(
+                id=t.id,
+                status=t.status.value,
+                finished_at=t.finished_at.isoformat() if t.finished_at else None,
+                output_pdf=t.output_pdf or "",
+                preview_only=_settings.preview_only,
+                has_docx=has_docx,
+            ))
     return CaseDetail(
         id=case.id, title=case.title, case_type=case.case_type,
         created_at=case.created_at.isoformat(), file_count=len(files),

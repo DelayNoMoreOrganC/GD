@@ -5,21 +5,26 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 
 from .config import get_settings
 
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 _settings = get_settings()
 
 
 def hash_password(password: str) -> str:
-    return _pwd_context.hash(password)
+    raw = password.encode("utf-8")
+    if len(raw) > 72:
+        raise ValueError("password exceeds bcrypt's 72-byte limit")
+    return bcrypt.hashpw(raw, bcrypt.gensalt()).decode("ascii")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
     try:
-        return _pwd_context.verify(plain, hashed)
+        raw = plain.encode("utf-8")
+        if len(raw) > 72:
+            return False
+        return bcrypt.checkpw(raw, hashed.encode("ascii"))
     except Exception:
         return False
 

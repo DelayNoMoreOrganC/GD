@@ -7,6 +7,7 @@ from document_segmenter import (
     DOC_TYPE_COMPLAINT,
     DOC_TYPE_CONTRACT,
     DOC_TYPE_EXECUTION,
+    DOC_TYPE_INDICTMENT,
     DOC_TYPE_JUDGMENT,
     DOC_TYPE_POA,
 )
@@ -39,6 +40,13 @@ FIELD_PRIORITY = {
     "审（办）结果": [DOC_TYPE_JUDGMENT, DOC_TYPE_EXECUTION],
     "法院文件清单": [DOC_TYPE_JUDGMENT, DOC_TYPE_EXECUTION],
     "承办律师": [DOC_TYPE_POA, DOC_TYPE_JUDGMENT],  # poa优先（授权委托书有律师信息）
+    # 刑事案件角色（后续 normalize_fields 会映射到通用模板字段）
+    "被告人": [DOC_TYPE_JUDGMENT, DOC_TYPE_INDICTMENT],
+    "犯罪嫌疑人": [DOC_TYPE_INDICTMENT, DOC_TYPE_JUDGMENT],
+    "公诉机关": [DOC_TYPE_INDICTMENT, DOC_TYPE_JUDGMENT],
+    "辩护人": [DOC_TYPE_JUDGMENT, DOC_TYPE_POA],
+    "罪名": [DOC_TYPE_JUDGMENT, DOC_TYPE_INDICTMENT],
+    "审判法院": [DOC_TYPE_JUDGMENT],
 }
 
 
@@ -63,7 +71,7 @@ def _pick_value(field: str, partials: dict) -> str:
     return ""
 
 
-def merge_partial_fields(partials: dict) -> dict:
+def merge_partial_fields(partials: dict, case_type: str | None = None) -> dict:
     """partials: {doc_type: {field: value}} → flat dict"""
     all_keys = set()
     for bucket in partials.values():
@@ -113,8 +121,14 @@ def merge_partial_fields(partials: dict) -> dict:
         if items:
             merged["法院文件清单"] = "、".join(items)
 
-    merged.setdefault("案件类别", "民事")
-    merged.setdefault("律师事务所", "广东至高律师事务所")
-    merged.setdefault("委托人对服务质量意见", "委托人对承办律师服务质量表示满意")
+    labels = {
+        "civil": "民事",
+        "criminal": "刑事",
+        "admin": "行政",
+        "nonlit": "非诉",
+        "counsel": "法律顾问",
+    }
+    if case_type in labels:
+        merged["案件类别"] = labels[case_type]
 
     return merged

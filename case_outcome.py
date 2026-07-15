@@ -21,8 +21,8 @@ OUTCOME_TYPE_RULES = (
     ("suspension", ("中止执行",)),
     ("debt_cert", ("债权凭证",)),
     ("property_offset", ("以物抵债",)),
-    ("completed", ("执行完毕", "履行完毕", "自动履行", "清偿完毕", "执行终结")),
     ("zhiben", ("终结本次执行", "终本", "暂无其他可供执行", "无其他可供执行财产")),
+    ("completed", ("执行完毕", "履行完毕", "自动履行", "清偿完毕", "执行终结")),
 )
 
 SPECIAL_OUTCOME_TYPES = frozenset({
@@ -70,6 +70,8 @@ OUTCOME_REFERENCE_SHORT = (
 def _normalize_spaces(text: str) -> str:
     s = re.sub(r"[ \t\r\n]+", " ", (text or "").strip())
     s = re.sub(r" +", " ", s)
+    s = re.sub(r"(?<=[\u4e00-\u9fff]) +(?=[\u4e00-\u9fff])", "", s)
+    s = re.sub(r"(?<=[0-9]) +(?=[元年月日%])", "", s)
     return s
 
 
@@ -87,7 +89,7 @@ def truncate_chinese(text: str, max_len: int = CASE_OUTCOME_MAX_LEN) -> str:
     if len(s) <= max_len:
         return s
     cut = s[:max_len]
-    for sep in ("。", "；", "，"):
+    for sep in ("。", "；", "，", "、"):
         idx = cut.rfind(sep)
         if idx > max_len * 0.6:
             return cut[: idx + 1]
@@ -98,6 +100,19 @@ def classify_execution_outcome(text: str) -> str:
     """识别执行结果类型（破产等特殊情况优先于常规终本）。"""
     t = text or ""
     for name, markers in OUTCOME_TYPE_RULES:
+        if name == "completed":
+            # 「未履行完毕」「尚未执行完毕」并不表示执行完毕。
+            for marker in markers:
+                start = 0
+                while True:
+                    idx = t.find(marker, start)
+                    if idx < 0:
+                        break
+                    prefix = t[max(0, idx - 4):idx]
+                    if not any(neg in prefix for neg in ("未", "尚未", "没有", "并未")):
+                        return name
+                    start = idx + len(marker)
+            continue
         if any(m in t for m in markers):
             return name
     if "执行" in t:
@@ -128,6 +143,31 @@ def pick_best_outcome_text(fields: dict) -> str:
 
 def _has_enforcement_measures(text: str) -> bool:
     return any(k in (text or "") for k in ("查封", "冻结", "扣划", "拍卖", "变卖", "查控"))
+
+
+def _execution_measures(text: str) -> list[str]:
+    """从全部执行材料中提炼实际采取的措施，避免使用不存在的固定示例。"""
+    t = text or ""
+    measures: list[str] = []
+    if "预查封" in t:
+        measures.append("预查封")
+    elif "查封" in t:
+        measures.append("查封")
+    for marker, label in (
+        ("冻结", "冻结"),
+        ("扣划", "扣划"),
+        ("拍卖", "拍卖"),
+        ("变卖", "变卖"),
+    ):
+        if marker in t:
+            measures.append(label)
+    if any(marker in t for marker in ("网络执行查控", "网络查控", "查控系统")):
+        measures.append("网络查控")
+    if "限制消费" in t:
+        measures.append("限制消费")
+    if any(marker in t for marker in ("失信被执行人", "纳入失信")):
+        measures.append("纳入失信名单")
+    return measures
 
 
 def _strip_exec_prefix(body: str) -> str:
@@ -161,12 +201,17 @@ def _polish_judgment_clause(j: str) -> str:
     s = _strip_execution_from_judgment(j).rstrip("。；，")
     if not s:
         return ""
-    if not s.startswith(("法院判决", "判决")):
-        m = re.search(r"(法院判决|判决)", s)
+    s = s.lstrip("：:，。； ")
+    s = re.sub(r"^[一二三四五六七八九十0-9]+[、.．]\s*", "", s)
+    s = re.sub(r"(?:应)?于?本判决发生法律效力之日起十日内", "", s)
+    if s.startswith("判决") and not s.startswith("法院判决"):
+        s = "法院" + s
+    elif not s.startswith("法院判决"):
+        m = re.search(r"法院判决", s)
         if m:
             s = s[m.start() :]
         else:
-            s = "法院判决" + s.lstrip("判")
+            s = "法院判决" + s
     return s
 
 
@@ -187,6 +232,7 @@ def format_execution_for_practice(blurb: str, outcome_type: str = "", max_len: i
         return ""
     outcome_type = outcome_type or classify_execution_outcome(raw)
     has_measures = _has_enforcement_measures(raw)
+    measures = _execution_measures(raw)
 
     clause = ""
     if outcome_type == "bankruptcy":
@@ -228,9 +274,15 @@ def format_execution_for_practice(blurb: str, outcome_type: str = "", max_len: i
         else:
             clause = "执行过程中，本案已全部执行完毕"
     elif outcome_type == "zhiben":
-        if has_measures:
+        if measures:
+            measure_text = "、".join(measures[:5])
             clause = (
-                "本院立案执行并采取查封、拍卖等措施，"
+                f"本院立案执行并采取{measure_text}等措施，"
+                "因被执行人暂无其他可供执行财产，裁定终结本次执行程序"
+            )
+        elif has_measures:
+            clause = (
+                "本院立案执行并采取财产查控措施，"
                 "因被执行人暂无其他可供执行财产，裁定终结本次执行程序"
             )
         else:
@@ -289,6 +341,14 @@ def synthesize_outcome_narrative(
         j = j + "。"
 
     connector = _pick_execution_connector(j, e_type)
+    # 为执行段预留篇幅。判决主文很长时，不能在最终 150 字截断时把执行结论整体挤掉。
+    j = re.sub(r"（[^）]{12,}）", "", j)
+    reserve = len(connector) + len(e_body) + 1
+    judgment_limit = max(40, max_len - reserve - 1)
+    if len(j) > judgment_limit:
+        j = truncate_chinese(j, judgment_limit)
+        if not j.endswith(("。", "；")):
+            j += "。"
     if connector:
         if e_body.startswith(("因", "经", "后", "但", "遂", "故", "现", "已", "本院")):
             merged = j + connector + e_body + "。"

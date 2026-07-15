@@ -11,18 +11,30 @@
       <ul style="margin: 4px 0 0; padding-left: 18px"><li v-for="(w, i) in outcomeWarnings" :key="i">{{ w }}</li></ul>
     </el-alert>
 
+    <el-alert
+      v-if="task?.preview_only"
+      type="info"
+      :closable="false"
+      style="margin-bottom: 16px"
+      title="跨平台预览模式"
+      description="当前 Mac/Linux 部署不生成 DOCX，也不调用 Microsoft Word；系统会将核对后的网页表格直接生成 PDF 并合并归档。"
+    />
+
     <el-card v-if="showReviewEditor" ref="reviewCardRef" class="review-card" style="margin-bottom: 16px">
       <template #header>
-        <span>{{ task.status === 'done' ? '查看并编辑系统表' : '核对并编辑系统表（合并 PDF 前）' }}</span>
+        <span>{{ task.status === 'done' ? '查看并编辑系统表' : (task.preview_only ? '核对并编辑系统表预览' : '核对并编辑系统表（合并 PDF 前）') }}</span>
       </template>
       <p class="review-hint">
-        {{ task.status === 'done'
-          ? '在下方查看或修改 Word 内容与格式，保存后写入该任务的 Word 文书。'
-          : '在下方直接修改 Word 内容与格式，保存后确认合并归档。' }}
+        {{ task.preview_only
+          ? '下方按原 Word 文档的表格版式展示；仅表格中指定的填写单元格可编辑，保存后写入任务快照。'
+          : (task.status === 'done'
+            ? '在下方查看或修改 Word 内容与格式，保存后写入该任务的 Word 文书。'
+            : '在下方直接修改 Word 内容与格式，保存后确认合并归档。') }}
       </p>
       <el-tabs v-model="previewTab" class="review-tabs" @tab-change="onTabChange">
         <el-tab-pane v-for="name in templateNames" :key="name" :label="name" :name="name">
-          <DocxReviewEditor
+          <component
+            :is="task.preview_only ? PreviewFieldEditor : DocxReviewEditor"
             :ref="(el) => setEditorRef(name, el)"
             :task-id="taskId"
             :template-name="name"
@@ -35,24 +47,26 @@
       </el-alert>
       <el-button type="primary" :loading="saving" @click="onSaveCurrent">保存当前表格</el-button>
       <el-button type="primary" plain :loading="savingAll" @click="onSaveAll">保存全部表格</el-button>
-      <el-button v-if="task.status === 'awaiting_review'" type="success" :loading="assembling" @click="onAssemble">确认无误，合并归档 PDF</el-button>
+      <el-button v-if="task.can_assemble && (task.status === 'awaiting_review' || task.status === 'done')" type="success" :loading="assembling" @click="onAssemble">
+        {{ task.status === 'done' ? '保存修改并重新生成归档 PDF' : '确认无误，生成并合并归档 PDF' }}
+      </el-button>
       <el-alert v-else-if="task.status === 'done'" type="info" :closable="false" title="提示" style="margin-top:12px">
-        修改会保存至 Word 文书；如需更新归档 PDF，请返回案件页重新生成。
+        当前服务器未找到 PDF 生成器，修改会先保存到表格快照。
       </el-alert>
     </el-card>
 
     <el-card style="margin-bottom: 16px" v-if="task && (task.status === 'done' || task.status === 'failed')">
       <div v-if="task.status === 'done'">
-        <el-result icon="success" title="归档完成" sub-title="归档结果长期保存在该案件下，可随时返回查看">
+        <el-result icon="success" :title="task.has_archive ? '归档完成' : '预览核对完成'" :sub-title="task.has_archive ? '归档 PDF 已生成，可下载或继续修改后重新生成' : '字段快照已保存，可随时返回继续预览编辑'">
           <template #extra>
-            <el-button type="primary" :icon="Download" @click="download('archive')">下载完整归档 PDF</el-button>
-            <el-button :icon="Document" @click="download('docx')">下载 Word 文书</el-button>
-            <el-button :icon="Files" @click="download('zip')">下载全部(ZIP)</el-button>
+            <el-button v-if="task.has_archive" type="primary" :icon="Download" @click="download('archive')">下载完整归档 PDF</el-button>
+            <el-button v-if="task.has_docx" :icon="Document" @click="download('docx')">下载 Word 文书</el-button>
+            <el-button v-if="task.has_docx" :icon="Files" @click="download('zip')">下载全部(ZIP)</el-button>
           </template>
         </el-result>
         <el-descriptions :column="2" border style="margin: 12px 10px 0">
           <el-descriptions-item label="任务编号">{{ task.id }}</el-descriptions-item>
-          <el-descriptions-item label="归档状态">已完成</el-descriptions-item>
+          <el-descriptions-item label="任务状态">{{ task.has_archive ? '归档完成' : '预览核对完成' }}</el-descriptions-item>
           <el-descriptions-item label="目录命中数" v-if="task.catalog_status">{{ foundCount }} / {{ task.catalog_status.length }}</el-descriptions-item>
         </el-descriptions>
       </div>
@@ -77,6 +91,7 @@ import { Download, Document, Files } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import client from '../api/client'
 import DocxReviewEditor from '../components/DocxReviewEditor.vue'
+import PreviewFieldEditor from '../components/PreviewFieldEditor.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -129,6 +144,7 @@ async function loadTask() {
 }
 
 function connectWs() {
+  if (ws) ws.close()
   const token = localStorage.getItem('v5_token') || ''
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   ws = new WebSocket(proto + '://' + location.host + '/api/ws/tasks/' + taskId + '?token=' + token)
@@ -162,10 +178,11 @@ const missingItems = computed(() => (task.value?.catalog_status || []).filter((c
 
 async function onSaveCurrent() {
   const ed = editorRefs.value[previewTab.value]
-  if (!ed?.saveDocx) { ElMessage.warning('编辑器未就绪'); return }
+  const save = ed?.saveChanges || ed?.saveDocx
+  if (!save) { ElMessage.warning('编辑器未就绪'); return }
   saving.value = true
   try {
-    if (await ed.saveDocx()) ElMessage.success('已保存：' + previewTab.value)
+    if (await save.call(ed)) ElMessage.success('已保存：' + previewTab.value)
     else ElMessage.error('保存失败')
   } finally { saving.value = false }
 }
@@ -176,7 +193,8 @@ async function onSaveAll() {
   try {
     for (const name of templateNames) {
       const ed = editorRefs.value[name]
-      if (ed?.saveDocx && await ed.saveDocx()) ok++
+      const save = ed?.saveChanges || ed?.saveDocx
+      if (save && await save.call(ed)) ok++
     }
     ElMessage.success('已保存 ' + ok + ' / ' + templateNames.length + ' 份表格')
   } finally { savingAll.value = false }
@@ -184,7 +202,7 @@ async function onSaveAll() {
 
 async function onAssemble() {
   try {
-    await ElMessageBox.confirm('合并前是否已保存全部修改？', '确认合并', { confirmButtonText: '已保存，继续合并', cancelButtonText: '取消', type: 'warning' })
+    await ElMessageBox.confirm('系统会先保存全部表格，再生成系统表 PDF 并合并案卷。是否继续？', '确认生成归档', { confirmButtonText: '保存并生成', cancelButtonText: '取消', type: 'warning' })
   } catch { return }
   assembling.value = true
   try {
@@ -194,6 +212,7 @@ async function onAssemble() {
       skipped: missingItems.value.map((m: any) => m.seq),
     })
     ElMessage.success('正在合并归档 PDF')
+    connectWs()
     await loadTask()
   } catch (e: any) {
     if (e !== 'cancel') ElMessage.error(e.response?.data?.detail || '合并失败')

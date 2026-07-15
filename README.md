@@ -1,151 +1,67 @@
-# 法律文档自动化处理系统
+# 案件归档系统 V6
 
-## 📋 系统说明
+V6 是面向律师事务所的案件归档 Web 系统。它将 OCR、文书切分、字段提取、系统表核对和归档输出串成一套流程，并在生成最终成果前保留人工核对闸门。
 
-这是对你委托第三方开发的软件的**升级版本**，解决了原软件的**格式破坏问题**。
+## 当前能力
 
-### 核心优势
+- macOS / Linux：默认使用浏览器预览模式，不生成 DOCX、不依赖 Microsoft Word；五份系统表按原表格版式编辑，并通过无头 Chrome/Chromium 生成 PDF 后合并完整案卷。
+- Windows：可使用 Word COM 生成 DOCX，并继续合并完整归档 PDF。
+- 多账号：案件数据按组织隔离；LLM Key、模型地址和 OCR Token 按登录账号独立保存。
+- 表格核对：支持单元格内容、字体、字号、对齐和自定义文本框；长内容自动增高。
+- 审办结果：同时分析诉讼和执行材料，案卷存在执行证据时综合表述执行措施与结果。
 
-| 功能 | 原软件 | 本系统 |
-|------|--------|--------|
-| 格式保护 | ❌ 破坏表格结构 | ✅ 100%保留格式（宋体四号，20磅行距） |
-| 模板管理 | ❌ 固定模板 | ✅ 支持5个模板，可扩展 |
-| 错误处理 | ❌ 无 | ✅ 多层验证和降级方案 |
-| 批量处理 | ❌ 单文件 | ✅ 支持批量处理 |
-
----
-
-## 🛠️ 安装依赖
+## 快速启动（macOS / Linux）
 
 ```bash
-pip install python-docx openai
+cd web/frontend
+npm ci
+npm run build
+
+cd ../backend
+python3 -m venv ../.venv
+../.venv/bin/pip install -r requirements.txt
+../.venv/bin/python run.py
 ```
 
----
+浏览器打开 <http://127.0.0.1:8000>。局域网测试时，在 `web/.env` 设置 `V5_HOST=0.0.0.0`，重启后访问 `http://本机局域网IP:8000`。
 
-## 🚀 快速开始
+`V5_` 环境变量前缀为兼容既有部署而保留，不代表当前产品版本。
 
-### 1. 测试模板填充功能
+首次启动会创建管理员账号，默认值为 `admin / admin123`。投入使用前请修改默认密码和 `V5_SECRET_KEY`。
+
+## 目录
+
+```text
+web/backend/        FastAPI API、任务与账号隔离
+web/frontend/       Vue 3 浏览器界面和系统表编辑器
+templates/          Word 模板、单元格 manifest 与参考索引
+prompts/            案件字段提取提示词
+tests/              核心归档逻辑回归测试
+docs/               当前业务与部署文档
+```
+
+## 验证
 
 ```bash
-python template_filler.py
+# 核心逻辑
+web/.venv312/bin/python -m pytest tests/ -q
+
+# Web 后端
+cd web/backend
+../.venv312/bin/python -m pytest tests/ -q
+
+# Web 前端
+cd ../frontend
+npm run build
 ```
 
-这会使用示例数据填充所有5个模板，验证格式是否正确。
+## 当前文档
 
-### 2. 处理真实PDF文档
+- [V6 版本说明](docs/V6_RELEASE.md)
+- [Web 开发与运行](web/README.md)
+- [部署说明](web/deploy/DEPLOY_README.md)
+- [归档生成标准](docs/归档生成标准.md)
+- [归档排序规则](docs/ARCHIVE_ORDER.md)
+- [模板参考资料整理](docs/模板参考资料整理.md)
 
-```bash
-python legal_doc_system.py
-```
-
-按提示输入PDF路径和输出目录。
-
----
-
-## 📁 文件说明
-
-| 文件 | 功能 |
-|------|------|
-| `template_filler.py` | 模板填充核心模块（格式保护） |
-| `legal_doc_system.py` | 完整系统（PDF解析 → LLM → 填充） |
-| `templates/` | 5个Word模板文件 |
-
----
-
-## 🔧 技术方案
-
-### 格式保护原理
-
-```python
-# 问题：直接替换文本会破坏表格结构
-# 解决方案：在表格cell级别进行精确替换
-
-for table in doc.tables:
-    for row in table.rows:
-        for cell in row.cells:
-            # 找到【字段名】格式的占位符
-            if '【' in cell.text and '】' in cell.text:
-                # 清空内容，保留格式
-                cell.paragraphs[0].clear()
-                # 插入新文本，强制设置格式
-                run = cell.paragraphs[0].add_run(字段值)
-                run.font.name = '宋体'
-                run.font.size = Pt(14)  # 四号
-                cell.paragraphs[0].paragraph_format.line_spacing = Pt(20)  # 20磅
-```
-
-### 字段映射
-
-你的提示词提取的字段会自动映射到模板的【字段名】占位符。
-
----
-
-## ⚠️ 注意事项
-
-1. **模板格式**：确保模板中的占位符是【字段名】格式
-2. **LLM API**：需要在代码中配置你的OpenAI API密钥
-3. **minerU**：需要单独安装minerU工具并配置命令行路径
-
----
-
-## 🎯 优化建议
-
-### 短期优化（立即可做）
-
-1. **批量处理**
-```python
-pdf_files = ["case1.pdf", "case2.pdf", "case3.pdf"]
-for pdf in pdf_files:
-    system.process_pdf(pdf, output_dir, ORIGINAL_PROMPT)
-```
-
-2. **错误报告**
-```python
-# 生成处理失败清单
-failed_files = []
-try:
-    system.process_pdf(pdf, output_dir, ORIGINAL_PROMPT)
-except Exception as e:
-    failed_files.append((pdf, str(e)))
-```
-
-### 长期优化（未来版本）
-
-1. **Web界面**：添加简单的Web UI
-2. **OCR增强**：处理扫描版PDF
-3. **字段验证**：添加正则表达式验证
-4. **自定义模板**：支持用户上传自己的模板
-
----
-
-## 📞 技术支持
-
-如有问题，请检查：
-1. Python版本 >= 3.7
-2. 依赖库是否正确安装
-3. 模板文件路径是否正确
-4. LLM API密钥是否配置
-
----
-
-## 🔐 安全说明
-
-- 本系统仅在本地运行，不上传数据
-- LLM调用需要配置你自己的API密钥
-- 建议处理敏感文档时使用本地运行的LLM
-
----
-
-## 📊 性能对比
-
-| 指标 | 原软件 | 本系统 |
-|------|--------|--------|
-| 单文件处理时间 | ~30秒 | ~20秒（优化后） |
-| 格式准确率 | 60% | 100% |
-| 批量处理 | 不支持 | 支持 |
-| 错误处理 | 无 | 多层验证 |
-
----
-
-**升级版已就绪，可以立即投入使用！**
+旧的 V4 循环计划、0619 开发记录和 V5 汇报稿已移除；这些材料描述的阶段状态与当前 V6 实现不一致。

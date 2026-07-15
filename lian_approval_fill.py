@@ -134,14 +134,9 @@ def _build_case_brief(base_fields: dict) -> str:
     if brief and is_placeholder_value(brief):
         brief = ""
     if not brief:
-        party = _pick_defendants(base_fields) or (base_fields.get("对方当事人") or "").strip()
-        client = (base_fields.get("委托人") or "").strip()
-        target = (base_fields.get("起诉标的") or base_fields.get("标的额") or "").strip()
-        ok_party = party and not is_placeholder_value(party)
-        ok_client = client and not is_placeholder_value(client)
-        if ok_party and ok_client:
-            target_part = f"，起诉标的{target}元" if target else ""
-            brief = f"{party}的贷款逾期，{client}委托我所代理起诉{target_part}"
+        from field_mapping import _build_case_brief as _build_generic_brief
+
+        brief = _build_generic_brief(base_fields)
     content_lines = _pad_brief_content(brief)
     return "\r" + _join_word_lines(content_lines)
 
@@ -155,7 +150,7 @@ def expand_lian_fields(base_fields: dict) -> dict:
         return v if _is_valid_field_value(v) else ""
 
     return {
-        "1": (bf.get("案件类别") or "民事").strip() or "民事",
+        "1": (bf.get("案件类别") or "").strip(),
         "2": "",
         "3": _cell(bf.get("委托人") or bf.get("委托人名称") or ""),
         "4": _cell(_pick_lian_party(bf)),

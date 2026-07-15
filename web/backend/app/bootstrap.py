@@ -9,7 +9,7 @@ from .database import AsyncSessionLocal
 from .models import Org, Role, User
 from .security import hash_password
 
-logger = logging.getLogger("v5.bootstrap")
+logger = logging.getLogger("v6.bootstrap")
 
 
 async def ensure_bootstrap_admin():

@@ -2,14 +2,15 @@
 
 import logging
 import os
+import asyncio
 
 from sqlalchemy import select
 
-from ..config import ORGS_DIR
+from ..config import ORGS_DIR, get_settings
 from ..core.config_adapter import build_v4_config
 from ..core.v4_bridge import archive_pipeline
 from ..database import AsyncSessionLocal
-from ..models import ArchiveTask, Case, CaseFile, TaskStatus
+from ..models import ArchiveTask, Case, CaseFile, Org, TaskStatus
 from ..services.analysis_snapshot import (
     SYSTEM_TEMPLATE_NAMES,
     docx_dir,
@@ -22,9 +23,10 @@ from ..services.analysis_snapshot import (
     update_snapshot_fields,
 )
 from ..services.task_manager import task_manager
+from ..services.browser_pdf_service import render_system_form_pdfs
 from ..services.word_service import run_word
 
-logger = logging.getLogger("v5.archive")
+logger = logging.getLogger("v6.archive")
 
 
 def _now():
@@ -64,7 +66,7 @@ async def _persist_task(task_id, **fields):
             await db.commit()
 
 
-async def _load_case_context(case_id, org_id):
+async def _load_case_context(case_id, org_id, user_id):
     async with AsyncSessionLocal() as db:
         res = await db.execute(select(Case).where(Case.id == case_id, Case.org_id == org_id))
         case = res.scalar_one_or_none()
@@ -72,19 +74,25 @@ async def _load_case_context(case_id, org_id):
             return None
         fres = await db.execute(select(CaseFile).where(CaseFile.case_id == case_id).order_by(CaseFile.created_at))
         files = fres.scalars().all()
-        config = await build_v4_config(db)
+        config = await build_v4_config(db, user_id)
         return case, files, config
+
+
+async def _load_org_name(org_id: str) -> str:
+    async with AsyncSessionLocal() as db:
+        value = await db.scalar(select(Org.name).where(Org.id == org_id))
+        return value or ""
 
 
 def _work_dir_for(task, org_id: str) -> str:
     return task_work_dir(org_id, task.case_id, task.id)
 
 
-async def run_archive(task_id, case_id, org_id, order_mode="catalog"):
+async def run_archive(task_id, case_id, org_id, user_id, order_mode="catalog"):
     tracker = task_manager.get_tracker(task_id)
     ap = archive_pipeline()
     try:
-        ctx = await _load_case_context(case_id, org_id)
+        ctx = await _load_case_context(case_id, org_id, user_id)
         if not ctx:
             tracker.fail("案件不存在")
             return
@@ -112,27 +120,29 @@ async def run_archive(task_id, case_id, org_id, order_mode="catalog"):
         await _persist_task(task_id, status=TaskStatus.running, stage="OCR 识别中", order_mode=order_mode)
         tracker.update(5.0, "正在 OCR 识别")
         analysis = await run_word(ap.analyze_archive, case_type, sources=sources, config=config, log=tracker.log)
-        tracker.update(55.0, "正在生成系统表")
+        preview_only = get_settings().preview_only
+        tracker.update(55.0, "正在生成浏览器预览" if preview_only else "正在生成系统表")
 
         work = task_work_dir(org_id, case_id, task_id)
         os.makedirs(work, exist_ok=True)
-        stabilize_templates(analysis, work, log=tracker.log)
+        if not preview_only:
+            stabilize_templates(analysis, work, log=tracker.log)
         save_snapshot(work, analysis, base_name=base_name, order_mode=order_mode)
         persist_fields = _persist_fields(analysis)
-        dx = docx_dir(work)
+        dx = "" if preview_only else docx_dir(work)
 
         await _persist_task(
             task_id,
             status=TaskStatus.awaiting_review,
             progress=60.0,
-            stage="待核对表格与字段",
+            stage="待核对浏览器预览与字段" if preview_only else "待核对表格与字段",
             fields=persist_fields,
             catalog_status=_build_catalog_status(analysis),
             output_docx_dir=dx,
             error="",
             finished_at=None,
         )
-        tracker.update(60.0, "待核对表格与字段")
+        tracker.update(60.0, "待核对浏览器预览与字段" if preview_only else "待核对表格与字段")
         tracker.finish()
     except Exception as exc:
         logger.exception("archive task %s failed", task_id)
@@ -140,11 +150,11 @@ async def run_archive(task_id, case_id, org_id, order_mode="catalog"):
         tracker.fail(str(exc))
 
 
-async def run_assemble(task_id, case_id, org_id, order_mode=None, skipped=None):
+async def run_assemble(task_id, case_id, org_id, user_id, order_mode=None, skipped=None):
     tracker = task_manager.get_tracker(task_id)
-    ap = archive_pipeline()
     try:
-        ctx = await _load_case_context(case_id, org_id)
+        ap = archive_pipeline()
+        ctx = await _load_case_context(case_id, org_id, user_id)
         if not ctx:
             tracker.fail("案件不存在")
             return
@@ -156,19 +166,41 @@ async def run_assemble(task_id, case_id, org_id, order_mode=None, skipped=None):
         config.setdefault("archive", {})["order_mode"] = order_mode
         skip = skipped if skipped is not None else snap.get("skipped") or []
 
+        preview_only = get_settings().preview_only
+        if preview_only:
+            if not get_settings().chromium_executable:
+                raise RuntimeError("未找到 Chrome/Chromium，无法把浏览器表格生成 PDF")
+            await _persist_task(task_id, status=TaskStatus.running, stage="正在生成系统表 PDF")
+            tracker.update(65.0, "正在生成系统表 PDF")
+            organization_name = await _load_org_name(org_id)
+            analysis.generated_templates = await asyncio.to_thread(
+                render_system_form_pdfs,
+                analysis.fields,
+                organization_name,
+                work,
+                tracker.log,
+            )
+            save_snapshot(
+                work,
+                analysis,
+                base_name=base_name,
+                order_mode=order_mode,
+                skipped=skip,
+            )
+
         await _persist_task(task_id, status=TaskStatus.running, stage="正在合并归档 PDF")
-        tracker.update(70.0, "正在合并归档 PDF")
+        tracker.update(75.0, "正在合并归档 PDF")
         output_pdf = os.path.join(work, base_name + "_完整归档.pdf")
-        result = await run_word(
-            ap.assemble_archive,
+        assemble_call = lambda: ap.assemble_archive(
             analysis,
             output_pdf=output_pdf,
             config=config,
             skipped=skip,
             log=tracker.log,
         )
+        result = await asyncio.to_thread(assemble_call) if preview_only else await run_word(assemble_call)
         persist_fields = _persist_fields(analysis)
-        dx = docx_dir(work)
+        dx = "" if preview_only else docx_dir(work)
         if result.success:
             await _persist_task(
                 task_id,
@@ -206,21 +238,23 @@ async def update_task_fields(task, org_id: str, field_updates: dict) -> dict:
     data = load_snapshot_data(work)
     merged = dict(data.get("fields") or {})
     merged.update(field_updates or {})
-    for k in list(merged.keys()):
-        if k.startswith("_"):
-            continue
     if "结案小结" in field_updates:
         v = field_updates["结案小结"]
         merged["审（办）结果"] = v
         merged["审办结果"] = v
+        # The warnings were generated for the previous outcome text and become stale
+        # after a user edit or deterministic execution-evidence recomputation.
+        merged["_outcome_warnings"] = []
     update_snapshot_fields(work, merged)
     task.fields = merged
     return merged
 
 
-async def regenerate_templates(task, org_id: str, field_overrides=None, outcome_type="auto"):
+async def regenerate_templates(
+    task, org_id: str, user_id: str, field_overrides=None, outcome_type="auto"
+):
     ap = archive_pipeline()
-    ctx = await _load_case_context(task.case_id, org_id)
+    ctx = await _load_case_context(task.case_id, org_id, user_id)
     if not ctx:
         raise RuntimeError("案件不存在")
     case, _files, config = ctx
@@ -233,6 +267,17 @@ async def regenerate_templates(task, org_id: str, field_overrides=None, outcome_
         merged = apply_outcome_type_override(merged, outcome_type, "")
         merged = unify_case_outcome_fields(merged)
     analysis.fields = merged
+    if get_settings().preview_only:
+        analysis.generated_templates = {}
+        save_snapshot(
+            work,
+            analysis,
+            base_name=snap.get("base_name", "archive"),
+            order_mode=snap.get("order_mode", "catalog"),
+        )
+        task.fields = _persist_fields(analysis)
+        task.output_docx_dir = ""
+        return {}
     import archive_catalog as ac
     catalog = ac.get_catalog(analysis.case_type)
     dx = docx_dir(work)
@@ -274,7 +319,14 @@ async def preview_template_pdf(task, org_id: str, template_name: str) -> str:
     return await run_word(_convert)
 
 
-async def refill_templates(task, field_overrides, order_mode, outcome_type="auto", org_id: str = ""):
+async def refill_templates(
+    task,
+    field_overrides,
+    order_mode,
+    outcome_type="auto",
+    org_id: str = "",
+    user_id: str = "",
+):
     if not org_id:
         async with AsyncSessionLocal() as db:
             res = await db.execute(select(Case).where(Case.id == task.case_id))
@@ -282,13 +334,20 @@ async def refill_templates(task, field_overrides, order_mode, outcome_type="auto
             if not case:
                 raise RuntimeError("案件不存在")
             org_id = case.org_id
+            user_id = user_id or case.created_by
+    if not user_id:
+        raise RuntimeError("无法确定当前账号，不能读取 API 配置")
     work = _work_dir_for(task, org_id)
     if os.path.isfile(os.path.join(work, "analysis_snapshot.json")):
-        await regenerate_templates(task, org_id, field_overrides, outcome_type)
-        task_manager.start(task.id, run_assemble(task.id, task.case_id, org_id, order_mode))
+        await regenerate_templates(task, org_id, user_id, field_overrides, outcome_type)
+        if not get_settings().preview_only:
+            task_manager.start(
+                task.id,
+                run_assemble(task.id, task.case_id, org_id, user_id, order_mode),
+            )
         return
     ap = archive_pipeline()
-    ctx = await _load_case_context(task.case_id, org_id)
+    ctx = await _load_case_context(task.case_id, org_id, user_id)
     if not ctx:
         raise RuntimeError("案件不存在")
     case, files, config = ctx
@@ -347,4 +406,3 @@ def get_template_docx_path(task, org_id: str, template_name: str) -> str:
     if os.path.isfile(fallback):
         return fallback
     raise FileNotFoundError(template_name)
-

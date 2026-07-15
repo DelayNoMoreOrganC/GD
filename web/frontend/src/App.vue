@@ -8,9 +8,13 @@
             <el-icon><Folder /></el-icon>
             <span>案件管理</span>
           </el-menu-item>
-          <el-menu-item index="/settings" v-if="auth.isAdmin">
+          <el-menu-item index="/settings">
             <el-icon><Setting /></el-icon>
-            <span>系统设置</span>
+            <span>我的 API 配置</span>
+          </el-menu-item>
+          <el-menu-item index="/feedback">
+            <el-icon><Message /></el-icon>
+            <span>使用问题反馈</span>
           </el-menu-item>
           <el-menu-item index="/admin" v-if="auth.isAdmin">
             <el-icon><UserFilled /></el-icon>
@@ -55,7 +59,8 @@ const activeMenu = computed(() => route.path)
 const pageTitle = computed(() => {
   const map: Record<string, string> = {
     '/cases': '案件管理',
-    '/settings': '系统设置',
+    '/settings': '我的 API 配置',
+    '/feedback': '使用问题反馈',
     '/admin': '用户管理',
   }
   return map[route.path] || '案件归档系统'

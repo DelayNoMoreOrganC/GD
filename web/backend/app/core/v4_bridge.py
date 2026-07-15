@@ -1,6 +1,7 @@
 """Bridge to V4 modules by injecting the V4 project root onto sys.path.
 
-This lets V5 import mineru_api, archive_pipeline, pdf_doc_locator, etc.
+This lets the V6 Web layer import mineru_api, archive_pipeline,
+pdf_doc_locator, etc.
 WITHOUT copying or modifying any V4 source. The V4 .doc templates and
 prompt files are also reachable through V4's own path resolution.
 """

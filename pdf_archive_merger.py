@@ -69,6 +69,24 @@ def insert_pdf_pages(
         return False
 
 
+def _find_cjk_font() -> str:
+    """Find an embeddable CJK font so the plain TOC works in every PDF viewer."""
+    candidates = [
+        "/System/Library/Fonts/Supplemental/Songti.ttc",
+        "/System/Library/Fonts/STHeiti Medium.ttc",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        os.path.expandvars(r"%WINDIR%\Fonts\simsun.ttc"),
+        os.path.expandvars(r"%WINDIR%\Fonts\msyh.ttc"),
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return ""
+
+
 def image_to_pdf(image_path: str, pdf_path: str, log=print) -> bool:
     if fitz is None:
         log("PyMuPDF 未安装，无法转换图片")
@@ -318,11 +336,15 @@ def _generate_toc_pdf(
 
     doc = fitz.open()
     page = doc.new_page(width=595, height=842)
+    font_path = _find_cjk_font()
+    font_name = "toc-cjk" if font_path else "china-s"
+    if font_path:
+        page.insert_font(fontname=font_name, fontfile=font_path)
     y = 72
-    page.insert_text((72, y), "卷内目录", fontname="china-s", fontsize=18)
+    page.insert_text((72, y), "卷内目录", fontname=font_name, fontsize=18)
     y += 36
-    page.insert_text((72, y), "名称", fontname="china-s", fontsize=11)
-    page.insert_text((460, y), "页码", fontname="china-s", fontsize=11)
+    page.insert_text((72, y), "名称", fontname=font_name, fontsize=11)
+    page.insert_text((460, y), "页码", fontname=font_name, fontsize=11)
     y += 24
 
     line_height = 16
@@ -332,8 +354,8 @@ def _generate_toc_pdf(
             # 超出单页：缩小行距继续在同一页绘制，不再新增页
             line_height = max(12, line_height - 2)
             y = 72
-        page.insert_text((72, y), f"{idx}. {name[:38]}", fontname="china-s", fontsize=9)
-        page.insert_text((460, y), str(page_num), fontname="china-s", fontsize=9)
+        page.insert_text((72, y), f"{idx}. {name[:38]}", fontname=font_name, fontsize=9)
+        page.insert_text((460, y), str(page_num), fontname=font_name, fontsize=9)
         y += line_height
 
     return doc
@@ -358,14 +380,18 @@ def _build_toc_doc(catalog, body_starts, cover_end_idx, case_type, work_dir, log
             if toc_doc:
                 toc_doc.close()
                 toc_doc = None
-            made = catalog_toc_to_pdf(
-                case_type,
-                display,
-                pdf_path,
-                work_dir,
-                toc_self_page=toc_self,
-                log=log,
-            )
+            try:
+                made = catalog_toc_to_pdf(
+                    case_type,
+                    display,
+                    pdf_path,
+                    work_dir,
+                    toc_self_page=toc_self,
+                    log=log,
+                )
+            except Exception as exc:
+                log(f"  [卷内目录] Word 模板不可用: {exc}")
+                made = False
             if made and fitz and os.path.isfile(pdf_path):
                 toc_doc = fitz.open(pdf_path)
                 actual = toc_doc.page_count
@@ -418,7 +444,9 @@ def _insert_system_template(
     try:
         from output_options import TEMPLATE_PAGE_BUDGET
 
-        max_pages = TEMPLATE_PAGE_BUDGET.get(template_name)
+        # Browser-rendered forms may grow when long editable cells wrap. The
+        # historical page budget only applies to fixed DOCX templates.
+        max_pages = None if docx_path.lower().endswith(".pdf") else TEMPLATE_PAGE_BUDGET.get(template_name)
     except ImportError:
         max_pages = None
 
@@ -590,16 +618,19 @@ def build_full_archive(
     # 独立的 scratch 目录，最终只在 output_pdf 目录留下成品 PDF，结束后清理。
     scratch = tempfile.mkdtemp(prefix="archive_scratch_")
 
-    template_pdfs = {}  # {docx_path -> 临时 PDF 路径}
+    template_pdfs = {}  # {系统表源路径 -> 可直接插入的 PDF 路径}
     convert_pairs = []
     for item in catalog_full:
         if item.source != "system" or not item.templates:
             continue
         template_name = item.templates[0]
         if template_name in generated_templates:
-            docx_path = generated_templates[template_name]
-            tmp_pdf = os.path.join(scratch, f"{template_name}_tmp.pdf")
-            convert_pairs.append((docx_path, tmp_pdf))
+            source_path = generated_templates[template_name]
+            if source_path.lower().endswith(".pdf") and os.path.isfile(source_path):
+                template_pdfs[source_path] = source_path
+            else:
+                tmp_pdf = os.path.join(scratch, f"{template_name}_tmp.pdf")
+                convert_pairs.append((source_path, tmp_pdf))
 
     if convert_pairs:
         log(f"批量转换 {len(convert_pairs)} 份系统模板 docx→pdf…")

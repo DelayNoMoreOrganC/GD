@@ -1,4 +1,4 @@
-# 模板单元格映射表（V1.2）
+# 模板单元格映射表（格式版本 1.2，V6 仍使用）
 
 每份 Word 模板对应一个 JSON，程序**仅**对 `role` 为 `fill` / `clear` / `seq_fill` 的格写入内容；`fixed` / `header` 格不修改。
 
@@ -6,11 +6,11 @@
 
 1. 修改 `templates/bundled/*.doc` 后，在项目根目录执行：
    ```
-   py tools/generate_template_manifest.py
-   py fix_manifest_roles.py
+   python tools/generate_template_manifest.py
+   python fix_manifest_roles.py
    ```
 2. 用编辑器打开本目录下对应 JSON，核对 `preview` 与 `role`。
-3. 重新打包 EXE 或直接用 `py legal_archive_gui.py` 测试。
+3. 运行模板填充测试，并在 V6 浏览器核对页检查对应表格。
 
 ## 字段说明
 

@@ -39,7 +39,7 @@ DOC_TYPE_CLIENT_TALK = "client_talk"
 
 DOC_TYPE_LABELS = {
     DOC_TYPE_DEFAULT: "默认（综合文档）",
-    DOC_TYPE_JUDGMENT: "民事判决书",
+    DOC_TYPE_JUDGMENT: "判决书",
     DOC_TYPE_EXECUTION: "执行裁定书",
     DOC_TYPE_CONTRACT: "委托代理合同",
     DOC_TYPE_COMPLAINT: "起诉状",
@@ -67,6 +67,8 @@ DOC_TYPE_LABELS = {
 
 ANCHORS = {
     DOC_TYPE_JUDGMENT: (
+        "刑事判决书",
+        "行政判决书",
         "民事判决书",
         "判决书",
     ),
@@ -100,6 +102,7 @@ ANCHORS = {
         "刑事辩护合同",
     ),
     DOC_TYPE_COMPLAINT: (
+        "行政起诉状",
         "民事起诉状",
         "起诉状",
     ),

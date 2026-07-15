@@ -3,7 +3,7 @@ REM 使用 NSSM 注册为 Windows 服务（需先下载 nssm.exe 并加入 PATH�
 chcp 65001 >nul
 setlocal
 
-set "SERVICE_NAME=ArchiveV5"
+set "SERVICE_NAME=ArchiveV6"
 set "INSTALL_ROOT=%~dp0"
 set "APP_DIR=%INSTALL_ROOT%app\web\backend"
 
@@ -32,7 +32,7 @@ nssm install %SERVICE_NAME% "%PYTHON_EXE%" run.py
 nssm set %SERVICE_NAME% AppDirectory "%APP_DIR%"
 nssm set %SERVICE_NAME% AppEnvironmentExtra "PYTHONUNBUFFERED=1"
 nssm set %SERVICE_NAME% Start SERVICE_AUTO_START
-nssm set %SERVICE_NAME% Description "案件归档系统 V5 后端服务"
+nssm set %SERVICE_NAME% Description "案件归档系统 V6 后端服务"
 nssm set %SERVICE_NAME% AppStdout "%APP_DIR%\service_stdout.log"
 nssm set %SERVICE_NAME% AppStderr "%APP_DIR%\service_stderr.log"
 

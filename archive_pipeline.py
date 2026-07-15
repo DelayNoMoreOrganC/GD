@@ -42,6 +42,7 @@ from document_segmenter import (
     DOC_TYPE_CONTRACT,
     DOC_TYPE_DEFAULT,
     DOC_TYPE_EXECUTION,
+    DOC_TYPE_INDICTMENT,
     DOC_TYPE_JUDGMENT,
     DOC_TYPE_POA,
     DOC_TYPE_LABELS,
@@ -108,6 +109,57 @@ def load_extract_prompt(prompt_path=None):
             text = text.rstrip() + "\n\n文档内容：\n"
         return text
     raise FileNotFoundError(f"提示词文件不存在: {path}")
+
+
+CASE_TYPE_LABELS = {
+    "civil": "民事",
+    "criminal": "刑事",
+    "admin": "行政",
+    "nonlit": "非诉",
+    "counsel": "法律顾问",
+}
+
+
+def detect_case_type(pdf_text: str) -> str:
+    """Best-effort case type detection used only when callers omit case_type."""
+    text = (pdf_text or "")[:30000]
+    def weighted(strong: tuple[str, ...], weak: tuple[str, ...] = ()) -> int:
+        return 6 * sum(text.count(x) for x in strong) + sum(text.count(x) for x in weak)
+
+    scores = {
+        "criminal": weighted(
+            ("刑事判决书", "刑事裁定书", "刑事起诉书", "公诉书"),
+            ("公诉机关", "被告人", "犯罪嫌疑人", "辩护人", "罪名"),
+        ),
+        "admin": weighted(
+            ("行政判决书", "行政裁定书", "行政起诉状", "行政复议决定书"),
+            ("行政诉讼", "被诉行政行为", "行政机关", "行政处罚"),
+        ),
+        "counsel": weighted(
+            ("常年法律顾问合同", "法律顾问合同", "常年法律顾问"),
+            ("顾问单位", "法律咨询", "合同审查"),
+        ),
+        "nonlit": weighted(
+            ("非诉讼法律事务委托合同", "专项法律服务合同", "法律尽职调查报告"),
+            ("非诉讼法律事务", "专项法律服务", "尽职调查"),
+        ),
+        "civil": weighted(
+            ("民事判决书", "民事裁定书", "民事起诉状", "民事调解书"),
+            ("原告", "被告", "上诉人", "被上诉人"),
+        ),
+    }
+    best = max(scores, key=scores.get)
+    return best if scores[best] > 0 else "civil"
+
+
+def resolve_case_type(case_type: Optional[str], pdf_text: str = "") -> str:
+    return case_type if case_type in CASE_TYPE_LABELS else detect_case_type(pdf_text)
+
+
+def load_case_prompt(case_type: str) -> str:
+    filename = f"extract_{case_type}.txt"
+    path = os.path.join(_prompts_dir(), filename)
+    return load_prompt_file(filename) if os.path.exists(path) else load_extract_prompt()
 
 
 _CRITICAL_FIELDS = ["委托人", "当事人", "对方当事人", "案由", "审理法院", "承办律师"]
@@ -195,45 +247,62 @@ def _deepseek_chat(user_content: str, system_content: str, *, max_retries: int =
     return {}
 
 
-def extract_fields_with_deepseek(pdf_text, prompt_path=None):
+def extract_fields_with_deepseek(pdf_text, prompt_path=None, case_type=None):
+    case_type = resolve_case_type(case_type, pdf_text)
+    case_label = CASE_TYPE_LABELS[case_type]
     system_content = (
-        "你是专业的法律文档分析助手。"
-        "结案小结与审（办）结果必须同时写入：①民事判决书主文（谁偿还本金利息、律师费等）；"
-        "②执行裁定书/终结本次执行程序要点（执行措施、无财产可供执行、终本等）。"
-        "不得仅写判决而忽略执行裁定书。不超过150字。"
+        f"你是专业的法律文档分析助手，当前案件类型为{case_label}。"
+        "只能依据文档原文提取，不得把其他案件类型的角色、案由或处理结果套入本案。"
+        "结案小结应概括本案实际裁判、处理或服务结果，不超过150字；"
+        "卷内存在执行材料时，必须综合全卷证据写明诉讼结果与执行措施、履行情况及最终执行结论。"
     )
-    prompt_template = load_extract_prompt(prompt_path)
+    prompt_template = load_extract_prompt(prompt_path) if prompt_path else load_case_prompt(case_type)
     cfg = load_config()
     chunk = build_pdf_chunk_for_llm(pdf_text, ocr_engine=get_ocr_engine(cfg))
     return _deepseek_chat(prompt_template + chunk, system_content)
 
 
-def extract_fields_segmented(segmented, log=print) -> dict:
+def extract_fields_segmented(segmented, log=print, case_type=None) -> dict:
     """分路提取：判决书 / 执行裁定书 / 委托代理合同"""
+    combined = "\n".join(str(v or "") for v in segmented.values())
+    case_type = resolve_case_type(case_type, combined)
+    case_label = CASE_TYPE_LABELS[case_type]
     system_content = (
-        "你是专业的法律文档分析助手。严格按提示词格式输出字段，不要额外说明。"
-        "判决书与执行裁定书分路提取时：判决字段只写裁判主文，执行字段只写执行与终本；"
-        "二者将合并为一段连贯的案件办理情况表述。"
+        f"你是专业的法律文档分析助手，当前案件类型为{case_label}。"
+        "严格按提示词格式输出字段，不要额外说明；不得混用不同案件类型的当事人角色。"
+        "执行分路必须通读全部执行阶段材料，以最终裁定为准并结合查控、查封、冻结、限制消费等事实综合归纳。"
     )
     partials = {}
 
-    routes = (
+    judgment_prompt = f"extract_judgment_{case_type}.txt"
+    if not os.path.exists(os.path.join(_prompts_dir(), judgment_prompt)):
+        judgment_prompt = "extract_judgment.txt"
+    judgment_label = "刑事裁判文书" if case_type == "criminal" else "裁判文书"
+
+    routes = [
         (DOC_TYPE_POA, "extract_poa.txt", "授权委托书"),
-        (DOC_TYPE_JUDGMENT, "extract_judgment.txt", "民事判决书"),
-        (DOC_TYPE_EXECUTION, "extract_execution.txt", "执行裁定书"),
-        (DOC_TYPE_CONTRACT, "extract_contract.txt", "委托代理合同"),
-    )
-    for doc_type, prompt_file, label in routes:
+        (DOC_TYPE_JUDGMENT, judgment_prompt, judgment_label),
+        (DOC_TYPE_CONTRACT, f"extract_contract_{case_type}.txt", "委托/法律服务合同"),
+    ]
+    if case_type == "criminal":
+        routes.append((DOC_TYPE_INDICTMENT, "extract_criminal_indictment.txt", "起诉书/抗诉书"))
+    if case_type in ("civil", "admin"):
+        routes.append((DOC_TYPE_EXECUTION, "extract_execution.txt", "执行阶段材料"))
+    processed_types = set()
+    for doc_type, prompt_file, route_label in routes:
         text = segmented.get(doc_type)
         if not text or len(text.strip()) < 30:
             continue
-        log(f"       分路提取：{label}（{len(text)} 字）")
+        processed_types.add(doc_type)
+        log(f"       分路提取：{route_label}（{len(text)} 字）")
         try:
+            if prompt_file.startswith("extract_contract_") and not os.path.exists(os.path.join(_prompts_dir(), prompt_file)):
+                prompt_file = "extract_contract.txt"
             prompt = load_prompt_file(prompt_file)
             chunk = text[:12000] if len(text) > 12000 else text
             partials[doc_type] = _deepseek_chat(prompt + chunk, system_content)
         except Exception as e:
-            log(f"  [WARN] {label} 提取失败: {e}")
+            log(f"  [WARN] {route_label} 提取失败: {e}")
 
     complaint = (
         segmented.get(DOC_TYPE_COMPLAINT)
@@ -241,43 +310,65 @@ def extract_fields_segmented(segmented, log=print) -> dict:
         or segmented.get(DOC_TYPE_DEFAULT)
     )
     if complaint and len(complaint.strip()) >= 30:
+        processed_types.update({DOC_TYPE_COMPLAINT, DOC_TYPE_OTHER, DOC_TYPE_DEFAULT})
         log(f"       分路提取：起诉状/其他（{len(complaint)} 字）")
         try:
-            prompt = load_extract_prompt()
+            prompt = load_case_prompt(case_type)
             chunk = complaint[:8000]
             partials[DOC_TYPE_COMPLAINT] = _deepseek_chat(prompt + chunk, system_content)
         except Exception as e:
             log(f"  [WARN] 起诉状提取失败: {e}")
 
+    # Non-litigation and counsel archives often consist of work records,
+    # opinions, reports, or other document types that have no civil route.
+    # Feed all remaining material to the case-specific prompt once.
+    remaining = "\n\n".join(
+        str(text or "")
+        for doc_type, text in segmented.items()
+        if doc_type not in processed_types and text and len(str(text).strip()) >= 30
+    )
+    if remaining:
+        log(f"       分路提取：其他{case_label}材料（{len(remaining)} 字）")
+        try:
+            partials[DOC_TYPE_OTHER] = _deepseek_chat(
+                load_case_prompt(case_type) + remaining[:12000],
+                system_content,
+            )
+        except Exception as e:
+            log(f"  [WARN] 其他材料提取失败: {e}")
+
     if not partials:
         return {}
 
-    merged = merge_partial_fields(partials)
+    merged = merge_partial_fields(partials, case_type=case_type)
     log(f"       分路合并 {len(merged)} 个字段")
     return merged
 
 
-def extract_fields_auto(pdf_text, segmented=None, log=print):
+def extract_fields_auto(pdf_text, segmented=None, log=print, case_type=None):
     """根据 config 选择 segmented 或 legacy 提取"""
+    case_type = resolve_case_type(case_type, pdf_text)
     mode = get_extraction_mode()
     if mode == "segmented":
         if segmented is None:
             segmented_obj = build_segmented_text(pdf_text=pdf_text)
             segmented = segmented_obj.segments
         if segmented and any(segmented.values()):
-            fields = extract_fields_segmented(segmented, log=log)
+            fields = extract_fields_segmented(segmented, log=log, case_type=case_type)
             if fields:
                 return fields
             log("  [WARN] 分路提取无结果，回退 legacy")
-    return extract_fields_with_deepseek(pdf_text)
+    return extract_fields_with_deepseek(pdf_text, case_type=case_type)
 
 
-def normalize_fields(raw, pdf_text="", doc_spans=None, page_texts_by_path=None):
+def normalize_fields(raw, pdf_text="", doc_spans=None, page_texts_by_path=None, case_type=None):
     if not raw:
         return {}
     from field_sanitize import enrich_party_fields
 
+    case_type = resolve_case_type(case_type, pdf_text)
     m = enrich_party_fields(dict(raw))
+    m["案件类别"] = CASE_TYPE_LABELS[case_type]
     aliases = {
         "委托人名称": "委托人",
         "委托方": "当事人",
@@ -289,14 +380,55 @@ def normalize_fields(raw, pdf_text="", doc_spans=None, page_texts_by_path=None):
         "被申请人": "对方当事人",
         "申请人": "当事人",
     }
+    if case_type == "criminal":
+        aliases.update({
+            "被告人": "当事人",
+            "犯罪嫌疑人": "当事人",
+            "辩护人": "承办律师",
+            "罪名": "案由",
+            "公诉机关": "对方当事人",
+            "审判法院": "审理法院",
+        })
+    elif case_type == "admin":
+        aliases.update({
+            "行政相对人": "当事人",
+            "行政机关": "对方当事人",
+            "被诉行政机关": "对方当事人",
+            "审判法院": "审理法院",
+            "被诉行政行为": "案情简介",
+        })
+    elif case_type == "nonlit":
+        aliases.update({
+            "项目委托人": "委托人",
+            "项目事项": "案由",
+            "项目类型": "案由",
+            "项目律师": "承办律师",
+            "服务成果": "结案小结",
+        })
+    elif case_type == "counsel":
+        aliases.update({
+            "顾问单位": "委托人",
+            "顾问事项": "案由",
+            "顾问律师": "承办律师",
+            "服务成果": "结案小结",
+        })
     for src, dst in aliases.items():
         if src in m and m[src] and (dst not in m or not m.get(dst)):
             m[dst] = m[src]
     if m.get("委托人联系地址及电话") and not m.get("委托人电话"):
         m["委托人电话"] = m["委托人联系地址及电话"]
+    if case_type in ("nonlit", "counsel") and m.get("结案小结") and not m.get("审（办）结果"):
+        m["审（办）结果"] = m["结案小结"]
     from field_mapping import _build_case_project_name
 
-    full_case_name = _build_case_project_name(m)
+    if case_type == "criminal":
+        accused = str(m.get("被告人") or m.get("犯罪嫌疑人") or m.get("当事人") or "").strip()
+        charge = str(m.get("罪名") or m.get("案由") or "").strip()
+        full_case_name = str(m.get("案件或项目名称") or "").strip()
+        if not full_case_name and (accused or charge):
+            full_case_name = f"被告人{accused}{'涉嫌' if charge and not charge.endswith('罪') else ''}{charge}一案"
+    else:
+        full_case_name = _build_case_project_name(m)
     if full_case_name:
         m["案件或项目名称"] = full_case_name
     if m.get("案由") and not m.get("案件或项目名称"):
@@ -308,6 +440,7 @@ def normalize_fields(raw, pdf_text="", doc_spans=None, page_texts_by_path=None):
     case_no = sanitize_court_case_no(
         m.get("法院收案号") or m.get("案号") or "",
         pdf_text,
+        case_type=case_type,
     )
     if case_no:
         m["法院收案号"] = case_no
@@ -316,12 +449,13 @@ def normalize_fields(raw, pdf_text="", doc_spans=None, page_texts_by_path=None):
     doc_list = parse_court_document_list(str(docs_raw))
     if doc_list:
         m["法院文件清单"] = "、".join(doc_list)
-    # V6：seq14/15 unit 规则合成优先于 LLM 归纳
-    if doc_spans is not None and page_texts_by_path:
-        m = build_outcome_from_units(m, doc_spans, page_texts_by_path, pdf_text)
-    m = ensure_outcome_covers_execution(m, pdf_text, units=doc_spans)
+    # 民事/行政执行案件才使用执行终本专用合成逻辑；刑事案件保留裁判结果原意。
+    if case_type in ("civil", "admin"):
+        if doc_spans is not None and page_texts_by_path:
+            m = build_outcome_from_units(m, doc_spans, page_texts_by_path, pdf_text)
+        m = ensure_outcome_covers_execution(m, pdf_text, units=doc_spans)
     m = unify_case_outcome_fields(m)
-    warnings = detect_outcome_warnings(m, doc_spans, pdf_text)
+    warnings = detect_outcome_warnings(m, doc_spans, pdf_text) if case_type in ("civil", "admin") else []
     if warnings:
         m["_outcome_warnings"] = warnings
     return sanitize_all_field_values(m)
@@ -723,13 +857,13 @@ def generate_system_templates(
     return generated_templates
 
 
-def extract_fields_from_text(pdf_text: str, log=print) -> Dict:
+def extract_fields_from_text(pdf_text: str, log=print, case_type=None) -> Dict:
     """WF4 辅助：全文 → 归一化字段"""
     if not pdf_text:
         return {}
     try:
-        raw_fields = extract_fields_auto(pdf_text, log=log)
-        return normalize_fields(raw_fields, pdf_text)
+        raw_fields = extract_fields_auto(pdf_text, log=log, case_type=case_type)
+        return normalize_fields(raw_fields, pdf_text, case_type=case_type)
     except Exception as e:
         log(f"       [WARN] 字段提取失败: {e}")
         return {}
@@ -856,9 +990,9 @@ def _analyze_archive_impl(
                 ).strip()
         try:
             segmented = build_segmented_text(source_texts=source_texts).segments
-            raw_fields = extract_fields_auto(pdf_text, segmented=segmented, log=log)
+            raw_fields = extract_fields_auto(pdf_text, segmented=segmented, log=log, case_type=case_type)
             fields = normalize_fields(
-                raw_fields, pdf_text, doc_spans=doc_spans, page_texts_by_path=page_texts_by_path
+                raw_fields, pdf_text, doc_spans=doc_spans, page_texts_by_path=page_texts_by_path, case_type=case_type
             )
         except Exception as e:
             log(f"       [WARN] 分路字段提取失败: {e}")
@@ -868,16 +1002,16 @@ def _analyze_archive_impl(
         if segmented and any(segmented.values()):
             try:
                 raw_fields = extract_fields_auto(
-                    pdf_text, segmented=segmented, log=log
+                    pdf_text, segmented=segmented, log=log, case_type=case_type
                 )
                 fields = normalize_fields(
-                    raw_fields, pdf_text, doc_spans=doc_spans, page_texts_by_path=page_texts_by_path
+                    raw_fields, pdf_text, doc_spans=doc_spans, page_texts_by_path=page_texts_by_path, case_type=case_type
                 )
             except Exception as e:
                 log(f"       [WARN] 分路字段提取失败: {e}")
-                fields = extract_fields_from_text(pdf_text, log=log)
+                fields = extract_fields_from_text(pdf_text, log=log, case_type=case_type)
         else:
-            fields = extract_fields_from_text(pdf_text, log=log)
+            fields = extract_fields_from_text(pdf_text, log=log, case_type=case_type)
     outcome_warnings = list(fields.pop("_outcome_warnings", None) or [])
     if outcome_warnings:
         for w in outcome_warnings:
@@ -895,13 +1029,28 @@ def _analyze_archive_impl(
             log("       [HINT] 请检查 DeepSeek 网络连通性与 OCR 文本质量")
 
     template_issues: List[str] = []
-    generated_templates = generate_system_templates(
-        catalog, fields, log=log, issues_out=template_issues
-    )
+    preview_only = bool((config or {}).get("output", {}).get("preview_only"))
+    if preview_only:
+        generated_templates = {}
+        log("       [PREVIEW] 当前为跨平台预览模式，跳过 DOCX 模板生成")
+    else:
+        generated_templates = generate_system_templates(
+            catalog, fields, log=log, issues_out=template_issues
+        )
 
     log("[4/4] 缺失项核对...")
     # 计算缺失项（V6：无执行案不将 seq15 计为缺失）
-    found_seqs = compute_found_seqs(catalog, doc_spans, generated_templates)
+    catalog_templates = generated_templates
+    if preview_only:
+        # Browser previews replace the five system DOCX files in this mode.
+        # Use virtual template names only for catalog completeness; they are
+        # deliberately not persisted as file paths or passed to PDF assembly.
+        catalog_templates = {
+            item.templates[0]: "preview-only"
+            for item in catalog
+            if item.source == "system" and item.templates
+        }
+    found_seqs = compute_found_seqs(catalog, doc_spans, catalog_templates)
     missing_items = compute_missing_items(case_type, catalog, found_seqs)
 
     log(f"       已找到: {len(found_seqs)} 项")
