@@ -323,7 +323,24 @@ def strip_template_reference_suffix(text: str) -> str:
     return s
 
 
-def sanitize_court_case_no(value: str, pdf_text: str = "") -> str:
+CASE_TYPE_NO_MARKERS = {
+    "criminal": ("刑初", "刑终", "刑再", "刑申", "刑抗", "刑核", "刑附民"),
+    "admin": ("行初", "行终", "行再", "行申", "行赔", "行非"),
+}
+
+
+def _sanitize_typed_case_no(value: str, pdf_text: str, case_type: str) -> str:
+    markers = CASE_TYPE_NO_MARKERS.get(case_type, ())
+    candidates = extract_case_numbers_from_text(value or "")
+    if not candidates and pdf_text:
+        candidates = extract_case_numbers_from_text((pdf_text or "")[:16000])
+    if markers:
+        candidates = [n for n in candidates if any(marker in n for marker in markers)]
+    candidates = [n for n in candidates if not any(x in n for x in EXECUTION_EXCLUDE)]
+    return "、".join(_dedupe_preserve_order(candidates)[:4])
+
+
+def sanitize_court_case_no(value: str, pdf_text: str = "", case_type: str = "civil") -> str:
     """
     档案卷宗等使用的法院收案号：仅判决书诉讼案号 + 执行裁定书执行案号。
     不从 PDF 全文捞取所有案号，避免另案/保全/律所函号等误入。
@@ -331,6 +348,9 @@ def sanitize_court_case_no(value: str, pdf_text: str = "") -> str:
     raw = strip_template_reference_suffix((value or "").strip())
     raw = re.sub(r"^参考格式[：:\s]*", "", raw)
     raw = re.sub(r"^格式[：:\s]*", "", raw)
+
+    if case_type != "civil":
+        return _sanitize_typed_case_no(raw, pdf_text, case_type)
 
     from_value = extract_case_numbers_from_text(raw)
     looks_like_prompt_example = any(m in (value or "") for m in PROMPT_EXAMPLE_MARKERS)

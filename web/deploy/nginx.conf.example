@@ -1,4 +1,4 @@
-# nginx reverse proxy for V5 — terminate TLS, serve SPA, proxy API + WS to uvicorn
+# nginx reverse proxy for V6 — terminate TLS, serve SPA, proxy API + WS to uvicorn
 
 server {
     listen 80;

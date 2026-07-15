@@ -4,18 +4,47 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
+import uuid
+import atexit
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+TEST_DB_PATH = os.path.join(tempfile.gettempdir(), f"gd_web_tests_{os.getpid()}.db")
+os.environ["V5_DATABASE_URL"] = "sqlite+aiosqlite:///" + TEST_DB_PATH
+
+
+def _cleanup_test_db():
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.remove(TEST_DB_PATH + suffix)
+        except FileNotFoundError:
+            pass
+
+
+atexit.register(_cleanup_test_db)
+
 from app.main import app
-from app.database import engine, AsyncSessionLocal
-from app.models import Base
+from app.bootstrap import ensure_bootstrap_admin
+from app.core.config_adapter import build_v4_config
+from app.database import AsyncSessionLocal, engine
+from app.models import Base, Setting
 
 
-@pytest.fixture(scope="function")
+@pytest_asyncio.fixture(scope="function", autouse=True)
+async def reset_database():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+    await ensure_bootstrap_admin()
+    yield
+
+
+@pytest_asyncio.fixture(scope="function")
 async def client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
@@ -71,3 +100,123 @@ async def test_case_crud(client):
 async def test_protected_without_token(client):
     r = await client.get("/api/cases")
     assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_self_registration_creates_isolated_workspace(client):
+    suffix = uuid.uuid4().hex[:8]
+    username = "user_" + suffix
+    payload = {
+        "username": username,
+        "password": "safe12345",
+        "display_name": "自助用户",
+        "org_name": "自助团队" + suffix,
+    }
+    registered = await client.post("/api/auth/register", json=payload)
+    assert registered.status_code == 201
+    token = registered.json()["access_token"]
+    headers = {"Authorization": "Bearer " + token}
+
+    me = await client.get("/api/auth/me", headers=headers)
+    assert me.status_code == 200
+    assert me.json()["username"] == username
+    assert me.json()["role"] == "lawyer"
+
+    logged_in = await client.post(
+        "/api/auth/login",
+        json={"username": username.upper(), "password": payload["password"]},
+    )
+    assert logged_in.status_code == 200
+    headers = {"Authorization": "Bearer " + logged_in.json()["access_token"]}
+
+    own_settings = await client.get("/api/settings", headers=headers)
+    assert own_settings.status_code == 200
+    assert own_settings.json()["deepseek_api_key"] == ""
+    assert own_settings.json()["deepseek_model"] == "deepseek-v4-flash"
+    assert own_settings.json()["mineru_api_token"] == ""
+
+    created = await client.post(
+        "/api/cases",
+        json={"title": "私有案件", "case_type": "criminal"},
+        headers=headers,
+    )
+    assert created.status_code == 201
+    case_id = created.json()["id"]
+
+    admin_token = await _login(client)
+    admin_cases = await client.get(
+        "/api/cases", headers={"Authorization": "Bearer " + admin_token}
+    )
+    assert all(item["id"] != case_id for item in admin_cases.json())
+
+    duplicate_payload = dict(payload, username=username.upper())
+    duplicate = await client.post("/api/auth/register", json=duplicate_payload)
+    assert duplicate.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_api_settings_are_isolated_per_account_in_same_org(client):
+    admin_token = await _login(client, "admin", "admin123")
+    lawyer_token = await _login(client, "zgls", "zgls123")
+    admin_headers = {"Authorization": "Bearer " + admin_token}
+    lawyer_headers = {"Authorization": "Bearer " + lawyer_token}
+
+    admin_me = (await client.get("/api/auth/me", headers=admin_headers)).json()
+    lawyer_me = (await client.get("/api/auth/me", headers=lawyer_headers)).json()
+    assert admin_me["org_id"] == lawyer_me["org_id"]
+
+    admin_payload = {
+        "deepseek_api_key": "admin-llm-key",
+        "deepseek_base_url": "https://admin-llm.example/v1",
+        "deepseek_model": "admin-model",
+        "mineru_api_token": "admin-ocr-token",
+        "order_mode": "catalog",
+    }
+    lawyer_payload = {
+        "deepseek_api_key": "lawyer-llm-key",
+        "deepseek_base_url": "https://lawyer-llm.example/v1",
+        "deepseek_model": "lawyer-model",
+        "mineru_api_token": "lawyer-ocr-token",
+        "order_mode": "original",
+    }
+    assert (
+        await client.put("/api/settings", json=admin_payload, headers=admin_headers)
+    ).status_code == 200
+    assert (
+        await client.put("/api/settings", json=lawyer_payload, headers=lawyer_headers)
+    ).status_code == 200
+
+    admin_settings = (await client.get("/api/settings", headers=admin_headers)).json()
+    lawyer_settings = (await client.get("/api/settings", headers=lawyer_headers)).json()
+    assert admin_settings == admin_payload
+    assert lawyer_settings == lawyer_payload
+
+    # Exercise the exact adapter used by archive jobs, not just the HTTP view.
+    async with AsyncSessionLocal() as db:
+        admin_config = await build_v4_config(db, admin_me["id"])
+        lawyer_config = await build_v4_config(db, lawyer_me["id"])
+    assert admin_config["deepseek"]["api_key"] == "admin-llm-key"
+    assert admin_config["mineru"]["api_token"] == "admin-ocr-token"
+    assert lawyer_config["deepseek"]["api_key"] == "lawyer-llm-key"
+    assert lawyer_config["mineru"]["api_token"] == "lawyer-ocr-token"
+
+
+@pytest.mark.asyncio
+async def test_legacy_global_keys_are_only_inherited_by_admin(client):
+    async with AsyncSessionLocal() as db:
+        db.add(Setting(key="deepseek_api_key", value="legacy-admin-key"))
+        db.add(Setting(key="mineru_api_token", value="legacy-admin-ocr"))
+        await db.commit()
+
+    admin_token = await _login(client, "admin", "admin123")
+    lawyer_token = await _login(client, "zgls", "zgls123")
+    admin_settings = await client.get(
+        "/api/settings", headers={"Authorization": "Bearer " + admin_token}
+    )
+    lawyer_settings = await client.get(
+        "/api/settings", headers={"Authorization": "Bearer " + lawyer_token}
+    )
+    assert admin_settings.json()["deepseek_api_key"] == "legacy-admin-key"
+    assert admin_settings.json()["mineru_api_token"] == "legacy-admin-ocr"
+    assert lawyer_settings.json()["deepseek_api_key"] == ""
+    assert lawyer_settings.json()["mineru_api_token"] == ""

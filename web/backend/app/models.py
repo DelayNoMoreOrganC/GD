@@ -66,6 +66,9 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
     org: Mapped["Org"] = relationship(back_populates="users")
+    api_settings: Mapped[list["UserSetting"]] = relationship(
+        back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class Case(Base):
@@ -125,9 +128,26 @@ class ArchiveTask(Base):
 
 
 class Setting(Base):
-    """System-level key/value settings (api keys, model config, etc.)."""
+    """Legacy global settings retained only for one-time admin migration."""
     __tablename__ = "settings"
 
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+class UserSetting(Base):
+    """Per-account LLM/OCR and workflow settings."""
+
+    __tablename__ = "user_settings"
+
+    user_id: Mapped[str] = mapped_column(
+        String(32), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow
+    )
+
+    user: Mapped["User"] = relationship(back_populates="api_settings")

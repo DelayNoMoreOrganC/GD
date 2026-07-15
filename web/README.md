@@ -1,71 +1,106 @@
-# 案件归档系统 V6 (Web 版)
+# 案件归档系统 V6（Web）
 
-> V6 在 V5 基础上增加：**预览核对闸门** + **浏览器内 Word 编辑**。详见 [docs/V6_RELEASE.md](../docs/V6_RELEASE.md)。
+后端使用 FastAPI + SQLite，前端使用 Vue 3 + Element Plus。macOS / Linux 默认在浏览器中核对原表版式；Windows 可继续使用 Word COM 生成 DOCX 和完整归档 PDF。
 
-## 架构
-- 后端：FastAPI + SQLite(WAL) + 异步任务
-- 前端：Vue3 + Element Plus + Vite + docx-editor-vue
-- OCR：MinerU API（云端）
-- LLM：DeepSeek API
-- 模板填充：Windows Server + Word (win32com)
-- 复用 V4 全部核心算法（通过 sys.path 桥接，不改动 V4 代码）
+## 目录
 
-## 目录结构
-```
+```text
 web/
-  backend/    FastAPI 后端
-  frontend/   Vue3 SPA
-  data/       运行时数据（数据库、案件文件）—— gitignore
-  deploy/     nginx 配置 + Windows 服务安装
+├── backend/     FastAPI、数据库、任务和账号隔离
+├── frontend/    Vue SPA 与五份系统表编辑器
+├── data/        运行数据（数据库、上传文件、输出文件；不提交）
+└── deploy/      部署说明、Windows 打包和服务脚本
 ```
 
 ## 开发启动
 
-### 单命令启动（前后端一体）
-```powershell
-cd F:\GD\web\backend
-python run.py
-```
-后端启动后，浏览器直接打开 http://127.0.0.1:8000 即可使用。
-首次启动自动创建默认律所 + admin 账号（admin / admin123，可在 .env 改）。
+### macOS / Linux
 
-### 后端（开发热重载）
-```powershell
-cd F:\GD\web\backend
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+```bash
+cd web/frontend
+npm ci
+npm run build
+
+cd ../backend
+python3 -m venv ../.venv
+../.venv/bin/pip install -r requirements.txt
+../.venv/bin/python run.py
 ```
 
-### 前端（开发模式）
+打开 <http://127.0.0.1:8000>。默认 `preview-only`，不会生成 DOCX，也不依赖 Microsoft Word；服务器使用 Chrome/Chromium 将网页表格生成 PDF 并合并完整归档。
+
+### Windows
+
 ```powershell
 cd F:\GD\web\frontend
 npm install
-npm run dev   # http://localhost:5173，自动代理 /api 到后端
+npm run build
+
+cd ..\backend
+python -m pip install -r requirements.txt
+python run.py
 ```
 
-## 生产部署
-1. 构建前端：`cd frontend && npm run build`（产物到 frontend/dist）
-2. 后端读取 frontend/dist 自动托管 SPA
-3. 启动后端：`python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1`
-4. nginx 反向代理 HTTPS（见 deploy/nginx.conf.example）
-5. 注册 Windows 服务（见 deploy/install_service.bat，需 NSSM）
+如需 DOCX 与完整归档合并，在 `web/.env` 中设置 `V5_PREVIEW_ONLY=false`，并确保服务器安装 Microsoft Word。
+
+### 前端热更新
+
+```bash
+cd web/frontend
+npm run dev
+```
+
+开发服务器默认位于 <http://localhost:5173>，并将 `/api` 代理到后端。
+
+## 账号与数据隔离
+
+- 注册用户拥有自己的组织空间，案件和文件按组织隔离。
+- DeepSeek Key、模型地址和 MinerU Token 按登录账号保存；同组织账号之间也不共享。
+- 账号所属律所名称用于立案审批表的制表单位。
+- 默认管理员为 `admin / admin123`，生产环境必须修改密码和 `V5_SECRET_KEY`。
 
 ## 配置
-- 系统设置在管理后台「系统设置」页配置（DeepSeek Key、MinerU Token、排序模式）
-- 环境变量（.env）：V5_SECRET_KEY、V5_HOST、V5_PORT、V5_BOOTSTRAP_ADMIN_*
 
-## V6 新特性摘要
-- 任务状态 `awaiting_review`：分析完成后暂停，合并 PDF 前人工核对
-- 5 份系统表浏览器内 Word 编辑（A4 布局预览）
-- 案件页已完成归档 → 「预览编辑」快捷入口
-- API：`/docx/{template}` 读写、`/assemble` 确认合并
+配置从 `web/.env` 读取。为兼容既有环境，变量仍使用 `V5_` 前缀：
 
-## 与 V4 / V5 的关系
-- V4 代码（F:\GD 根目录）零改动，Web 层通过 `app/core/v4_bridge.py` 复用
-- V5：Web 协同平台（登录、案件、上传、一键生成、下载）
-- V6：V5 + 预览核对闸门 + 在线 Word 编辑
-- V4 的 .doc 模板（templates/bundled）和提示词（prompts）通过 V4 自身路径解析复用
+```dotenv
+V5_SECRET_KEY=replace-with-a-long-random-secret
+V5_HOST=127.0.0.1
+V5_PORT=8000
+V5_PREVIEW_ONLY=true
+V5_CHROMIUM_PATH=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+V5_REGISTRATION_ENABLED=true
+V5_BOOTSTRAP_ADMIN_USER=admin
+V5_BOOTSTRAP_ADMIN_PASSWORD=change-this-password
+```
 
-## 限制
-- uvicorn 必须 `--workers 1`（Word COM 进程级单例）
-- 同一时刻只允许一个归档任务在模板填充阶段（Semaphore 串行）
-- 服务器需安装 Microsoft Word
+局域网测试将 `V5_HOST` 改为 `0.0.0.0`，然后使用 `http://服务器局域网IP:端口` 访问。公网部署应通过 HTTPS 反向代理，不要直接暴露开发配置。
+
+## V6 核心流程
+
+1. 上传材料并生成任务。
+2. OCR、切分、目录映射和字段提取。
+3. 任务进入 `awaiting_review`。
+4. 在五份系统表中修订文字、字体、字号、对齐和自定义文本框。
+5. 确认后生成系统表 PDF，计算目录页码并合并完整归档 PDF。
+
+## 测试
+
+```bash
+# 后端
+cd web/backend
+../.venv312/bin/python -m pytest tests/ -q
+
+# 前端
+cd ../frontend
+npm run build
+```
+
+核心归档逻辑测试位于项目根目录 `tests/`。
+
+## 运行限制
+
+- Word COM 模式使用 `--workers 1`。
+- macOS / Linux 的预览模式不提供 DOCX 下载，但可生成并下载最终归档 PDF。
+- HTML → PDF 需要 Chrome/Chromium；未自动检测到时配置 `V5_CHROMIUM_PATH`。
+- OCR 与 LLM 调用需要各账号自行配置可用的云端 API。

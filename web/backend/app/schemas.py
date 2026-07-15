@@ -3,13 +3,29 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---- Auth ----
 class LoginRequest(BaseModel):
     username: str
     password: str
+
+
+class RegisterRequest(BaseModel):
+    username: str = Field(..., min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_.-]+$")
+    password: str = Field(..., min_length=8, max_length=128)
+    display_name: str = Field(default="", max_length=100)
+    org_name: str = Field(..., min_length=2, max_length=100)
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, value: str) -> str:
+        if len(value.encode("utf-8")) > 72:
+            raise ValueError("密码不能超过72字节")
+        if not any(ch.isalpha() for ch in value) or not any(ch.isdigit() for ch in value):
+            raise ValueError("密码必须同时包含字母和数字")
+        return value
 
 
 class TokenResponse(BaseModel):
@@ -76,6 +92,8 @@ class TaskBriefOut(BaseModel):
     status: str
     finished_at: Optional[str] = None
     output_pdf: str = ""
+    preview_only: bool = False
+    has_docx: bool = False
 
 class CaseDetail(CaseOut):
     files: list[CaseFileOut] = []
@@ -93,6 +111,11 @@ class TaskOut(BaseModel):
     fields: Optional[dict] = None
     catalog_status: Optional[list] = None
     output_pdf: str = ""
+    order_mode: str = "catalog"
+    preview_only: bool = False
+    can_assemble: bool = True
+    has_docx: bool = False
+    has_archive: bool = False
     created_at: str
     finished_at: Optional[str] = None
 
@@ -124,11 +147,17 @@ class FieldsPatch(BaseModel):
     fields: dict[str, Any]
 
 
-# ---- Settings ----
+class PreviewFieldsUpdate(BaseModel):
+    values: dict[str, Any] = Field(default_factory=dict)
+    styles: dict[str, Any] = Field(default_factory=dict)
+    custom_values: dict[str, Any] = Field(default_factory=dict)
+
+
+# ---- Per-account API settings ----
 class SystemSettings(BaseModel):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
+    deepseek_model: str = "deepseek-v4-flash"
     mineru_api_token: str = ""
     order_mode: str = "catalog"
 

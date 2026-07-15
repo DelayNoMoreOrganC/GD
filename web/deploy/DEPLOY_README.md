@@ -1,101 +1,97 @@
-# 案件归档系统 V5 — 目标机部署说明
+# 案件归档系统 V6 部署说明
 
-## 前置要求（目标 Windows 电脑）
+## 一、本机或局域网部署（macOS / Linux，优先）
 
-| 项目 | 要求 |
-|------|------|
-| 操作系统 | Windows 10 / 11 / Server 2016+ |
-| Python | 3.12 或 3.14（安装时勾选 **Add to PATH**） |
-| Microsoft Word | 2007 或更高（模板填充必需） |
-| 网络 | 可访问 DeepSeek API、MinerU API（云端 OCR） |
-| 磁盘 | 建议 ≥ 2 GB 可用空间 |
+要求：Python 3.12、Node.js 20+、Google Chrome 或 Chromium，并能访问已配置的 OCR 与 LLM 服务。预览模式不要求安装 Microsoft Word。
 
-## 一、在开发机打包
+```bash
+cd web/frontend
+npm ci
+npm run build
 
-1. 打开 `F:\GD\web\deploy\pack_for_windows.bat`
-2. 等待前端构建 + 打包完成
-3. 获得部署包：`%TEMP%\v5_deploy.zip`
-
-## 二、在目标机安装
-
-1. 将 `v5_deploy.zip` 复制到目标电脑
-2. 解压到任意目录，例如 `D:\ArchiveV5\`
-3. **首次**：双击 `install.bat`（安装依赖并启动）
-4. **日常**：双击 `start_server.bat`
-
-解压后目录结构：
-
-```
-D:\ArchiveV5\
-  install.bat          ← 首次安装
-  start_server.bat     ← 日常启动
-  install_service.bat  ← 可选：注册 Windows 服务
-  部署说明.md
-  app\
-    web\backend\       ← FastAPI 后端
-    web\frontend\dist\ ← 前端静态页（由后端托管）
-    templates\         ← Word 模板与映射表
-    prompts\           ← LLM 提示词
-    *.py               ← V4 核心算法
+cd ../backend
+python3 -m venv ../.venv
+../.venv/bin/pip install -r requirements.txt
+../.venv/bin/python run.py
 ```
 
-## 三、访问与账号
+本机访问：<http://127.0.0.1:8000>
 
-- 本机：http://127.0.0.1:8000
-- 局域网：http://目标机IP:8000
+局域网访问：在 `web/.env` 中配置：
 
-| 账号 | 密码 | 角色 |
-|------|------|------|
-| admin | admin123 | 管理员（可删案件、管用户、系统设置） |
-| zgls | zgls123 | 律师 |
+```dotenv
+V5_HOST=0.0.0.0
+V5_PORT=8000
+V5_PREVIEW_ONLY=true
+V5_CHROMIUM_PATH=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+V5_SECRET_KEY=replace-with-a-long-random-secret
+V5_BOOTSTRAP_ADMIN_PASSWORD=replace-this-password
+```
 
-首次启动后请在 **系统设置** 配置：
-- DeepSeek API Key
-- MinerU API Token
+重启服务后，其他设备通过 `http://服务器局域网IP:8000` 访问。还需确保系统防火墙允许对应端口入站。
 
-可在 `app\web\.env` 修改端口、管理员密码等（修改后重启服务）。
+Linux 生产环境建议使用 systemd 管理单个 uvicorn worker，并通过 nginx/Caddy 提供 HTTPS、请求体大小限制和 WebSocket 代理。
 
-## 四、防火墙（局域网访问）
+## 二、Windows DOCX 模式
+
+要求：Windows 10/11 或 Windows Server、Python 3.12、Microsoft Word，以及可访问 OCR/LLM API 的网络。
+
+1. 在开发机运行 `web\deploy\pack_for_windows.bat`，得到 `%TEMP%\v6_deploy.zip`。
+2. 解压到例如 `D:\ArchiveV6\`。
+3. 首次运行 `install.bat`，以后运行 `start_server.bat`。
+4. 在 `app\web\.env` 设置 `V5_PREVIEW_ONLY=false`。
+5. 需要开机启动时，安装 NSSM 后以管理员身份运行 `install_service.bat`。
+
+环境变量使用 `V5_` 前缀是为了兼容既有配置，并非版本号。
+
+### Windows 防火墙
 
 以管理员身份运行 PowerShell：
 
 ```powershell
-New-NetFirewallRule -DisplayName "V5-Archive" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow
+New-NetFirewallRule -DisplayName "V6-Archive" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow
 ```
 
-## 五、注册为 Windows 服务（可选）
+## 三、账号初始化
 
-1. 下载 [NSSM](https://nssm.cc/download)，将 `nssm.exe` 加入 PATH
-2. 双击 `install_service.bat`
-3. 服务名：`ArchiveV5`，开机自启
+首次启动会创建管理员账号，默认 `admin / admin123`。正式使用前必须：
 
-## 六、数据与备份
+1. 修改管理员密码和 `V5_SECRET_KEY`。
+2. 由每个账号在“我的 API 配置”中保存自己的 LLM Key、模型地址和 OCR Token。
+3. 确认账号所属律所名称正确，该名称会用于系统表。
 
-运行时数据位于：
+## 四、数据与备份
 
+```text
+web/data/
+├── archive.db     SQLite 数据库
+└── orgs/          上传文件、任务快照和输出结果
 ```
-app\web\data\
-  archive.db      ← SQLite 数据库
-  orgs\           ← 上传的案件文件与归档结果
-```
 
-迁移或备份时，复制整个 `app\web\data\` 目录即可保留全部案件数据。
+停服后备份整个 `web/data/`。恢复时保持相同目录结构和文件权限。
 
-## 七、常见问题
+## 五、常见问题
 
-**pip 安装慢或失败**  
-使用国内镜像：`pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple`
+**局域网设备无法访问**
 
-**模板填充报错**  
-确认已安装 Microsoft Word，且当前 Windows 用户有 Word 使用权限。
+确认 `V5_HOST=0.0.0.0`、服务已重启、访问的是服务器局域网 IP，并检查操作系统防火墙与路由器的客户端隔离设置。
 
-**OCR 失败**  
-检查系统设置中的 MinerU Token 是否有效，目标机能否访问外网。
+**macOS / Linux 没有 DOCX 下载**
 
-**端口被占用**  
-修改 `app\web\.env` 中 `V5_PORT=8000` 为其他端口后重启。
+这是预览模式的设计行为。系统表在浏览器中编辑，并由 Chrome/Chromium 直接生成 PDF；DOCX/Word COM 流程仍需要 Windows。
 
-## 八、与 V4 的关系
+**提示未找到 PDF 生成器**
 
-- V4 算法以 `app\*.py` + `app\templates\` 形式随包分发，无需单独安装 V4
-- `uvicorn` 必须使用 `--workers 1`（Word COM 单进程限制）
+安装 Chrome/Chromium，或在 `web/.env` 中用 `V5_CHROMIUM_PATH` 指定浏览器可执行文件的绝对路径，然后重启服务。
+
+**Windows 模板填充失败**
+
+确认 Microsoft Word 已安装，运行服务的 Windows 用户能正常打开 Word，并保持后端单 worker。
+
+**OCR 或字段提取失败**
+
+使用当前登录账号打开“我的 API 配置”，检查该账号自己的 Token、Key、模型地址与外网连通性。
+
+**端口占用**
+
+修改 `web/.env` 中的 `V5_PORT` 后重启，并同步修改防火墙与反向代理配置。

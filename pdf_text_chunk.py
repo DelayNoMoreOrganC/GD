@@ -18,7 +18,7 @@ def build_pdf_chunk_for_llm(pdf_text: str, ocr_engine: str = "baidu") -> str:
     tail = pdf_text[-tail_lim:]
     mid_slices = []
     seen = set()
-    for anchor in ("执行裁定书", "终结本次执行程序", "民事判决书", "判决书"):
+    for anchor in ("刑事判决书", "行政判决书", "执行裁定书", "终结本次执行程序", "民事判决书", "判决书"):
         idx = pdf_text.find(anchor)
         if idx < 0:
             continue

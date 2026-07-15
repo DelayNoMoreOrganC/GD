@@ -3,17 +3,20 @@ from __future__ import annotations
 import asyncio
 import os
 import zipfile
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.websockets import WebSocketState
 
 from ..config import ORGS_DIR
+from ..config import get_settings
 from ..database import AsyncSessionLocal, get_db
 from ..deps import get_current_user
-from ..models import ArchiveTask, Case, CaseFile, TaskStatus, User
-from ..schemas import AssembleRequest, FieldUpdate, FieldsPatch, GenerateRequest, RegenerateRequest, TaskOut
+from ..models import ArchiveTask, Case, CaseFile, Org, TaskStatus, User
+from ..schemas import AssembleRequest, FieldUpdate, FieldsPatch, GenerateRequest, PreviewFieldsUpdate, RegenerateRequest, TaskOut
 from ..security import decode_token
 from ..services.analysis_snapshot import SYSTEM_TEMPLATE_NAMES
 from ..services.archive_service import (
@@ -27,6 +30,12 @@ from ..services.archive_service import (
     update_task_fields,
 )
 from ..services.output_cleanup import remove_task_outputs
+from ..services.preview_fields import (
+    build_preview,
+    sanitize_preview_custom_values,
+    sanitize_preview_styles,
+    sanitize_preview_updates,
+)
 from ..services.task_manager import task_manager
 
 router = APIRouter(tags=["tasks"])
@@ -39,7 +48,31 @@ async def _load_task_for_user(db, task_id, org_id):
 
 def _task_out(task):
     finished = task.finished_at.isoformat() if task.finished_at else None
-    return TaskOut(id=task.id, case_id=task.case_id, status=task.status.value, progress=task.progress, stage=task.stage, error=task.error, fields=task.fields, catalog_status=task.catalog_status, output_pdf=task.output_pdf, created_at=task.created_at.isoformat(), finished_at=finished)
+    preview_only = get_settings().preview_only
+    has_docx = bool(
+        task.output_docx_dir
+        and os.path.isdir(task.output_docx_dir)
+        and any(name.lower().endswith(".docx") for name in os.listdir(task.output_docx_dir))
+    )
+    has_archive = bool(task.output_pdf and os.path.isfile(task.output_pdf))
+    return TaskOut(
+        id=task.id,
+        case_id=task.case_id,
+        status=task.status.value,
+        progress=task.progress,
+        stage=task.stage,
+        error=task.error,
+        fields=task.fields,
+        catalog_status=task.catalog_status,
+        output_pdf=task.output_pdf,
+        order_mode=task.order_mode,
+        preview_only=preview_only,
+        can_assemble=bool(get_settings().capabilities["archive_assembly"]),
+        has_docx=has_docx,
+        has_archive=has_archive,
+        created_at=task.created_at.isoformat(),
+        finished_at=finished,
+    )
 
 
 @router.post("/api/cases/{case_id}/generate", response_model=TaskOut, status_code=201)
@@ -56,7 +89,10 @@ async def generate(body: GenerateRequest, case_id: str, user=Depends(get_current
     db.add(task)
     await db.commit()
     await db.refresh(task)
-    task_manager.start(task.id, run_archive(task.id, case_id, user.org_id, body.order_mode))
+    task_manager.start(
+        task.id,
+        run_archive(task.id, case_id, user.org_id, user.id, body.order_mode),
+    )
     return _task_out(task)
 
 
@@ -96,7 +132,9 @@ async def regenerate(body: RegenerateRequest, task_id: int, user=Depends(get_cur
         raise HTTPException(status.HTTP_404_NOT_FOUND, "task not found")
     if task.status != TaskStatus.awaiting_review:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "task not in review")
-    await regenerate_templates(task, user.org_id, body.fields, body.outcome_type)
+    await regenerate_templates(
+        task, user.org_id, user.id, body.fields, body.outcome_type
+    )
     task.stage = "表格已更新，请预览后合并"
     await db.commit()
     await db.refresh(task)
@@ -108,14 +146,92 @@ async def assemble(body: AssembleRequest, task_id: int, user=Depends(get_current
     task = await _load_task_for_user(db, task_id, user.org_id)
     if not task:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "task not found")
-    if task.status != TaskStatus.awaiting_review:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "task not in review")
+    if not get_settings().capabilities["archive_assembly"]:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "未找到可用的 PDF 生成器")
+    if task.status not in (TaskStatus.awaiting_review, TaskStatus.done):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "task not ready for assembly")
     if task_manager.is_running(task_id):
         raise HTTPException(status.HTTP_409_CONFLICT, "task already running")
     task.status = TaskStatus.running
     task.stage = "正在合并归档"
     await db.commit()
-    task_manager.start(task.id, run_assemble(task.id, task.case_id, user.org_id, body.order_mode, body.skipped or None))
+    task_manager.start(
+        task.id,
+        run_assemble(
+            task.id,
+            task.case_id,
+            user.org_id,
+            user.id,
+            body.order_mode,
+            body.skipped or None,
+        ),
+    )
+    await db.refresh(task)
+    return _task_out(task)
+
+
+@router.post("/api/tasks/{task_id}/complete-review", response_model=TaskOut)
+async def complete_review(task_id: int, user=Depends(get_current_user), db=Depends(get_db)):
+    task = await _load_task_for_user(db, task_id, user.org_id)
+    if not task:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "task not found")
+    if not get_settings().preview_only:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "DOCX 模式请使用归档合并流程")
+    if task.status != TaskStatus.awaiting_review:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "task not in review")
+    task.status = TaskStatus.done
+    task.progress = 100.0
+    task.stage = "浏览器预览核对完成"
+    task.error = ""
+    task.finished_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(task)
+    return _task_out(task)
+
+
+@router.get("/api/tasks/{task_id}/preview-fields/{template_name}")
+async def get_preview_fields(task_id: int, template_name: str, user=Depends(get_current_user), db=Depends(get_db)):
+    task = await _load_task_for_user(db, task_id, user.org_id)
+    if not task:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "task not found")
+    try:
+        preview = build_preview(template_name, task.fields)
+        org_name = await db.scalar(select(Org.name).where(Org.id == user.org_id))
+        preview["organization_name"] = org_name or ""
+        preview_styles = (task.fields or {}).get("_preview_styles") or {}
+        preview["styles"] = sanitize_preview_styles(
+            template_name, preview_styles.get(template_name) or {}
+        )
+        preview_custom_values = (task.fields or {}).get("_preview_custom_values") or {}
+        preview["custom_values"] = sanitize_preview_custom_values(
+            template_name, preview_custom_values.get(template_name) or {}
+        )
+        return preview
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.put("/api/tasks/{task_id}/preview-fields/{template_name}", response_model=TaskOut)
+async def put_preview_fields(body: PreviewFieldsUpdate, task_id: int, template_name: str, user=Depends(get_current_user), db=Depends(get_db)):
+    task = await _load_task_for_user(db, task_id, user.org_id)
+    if not task:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "task not found")
+    if task.status not in (TaskStatus.awaiting_review, TaskStatus.done):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "task not editable")
+    try:
+        updates = sanitize_preview_updates(template_name, body.values)
+        styles = sanitize_preview_styles(template_name, body.styles)
+        custom_values = sanitize_preview_custom_values(template_name, body.custom_values)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    preview_styles = dict((task.fields or {}).get("_preview_styles") or {})
+    preview_styles[template_name] = styles
+    updates["_preview_styles"] = preview_styles
+    preview_custom_values = dict((task.fields or {}).get("_preview_custom_values") or {})
+    preview_custom_values[template_name] = custom_values
+    updates["_preview_custom_values"] = preview_custom_values
+    task.fields = await update_task_fields(task, user.org_id, updates)
+    await db.commit()
     await db.refresh(task)
     return _task_out(task)
 
@@ -145,6 +261,8 @@ async def preview(task_id: int, template_name: str, token: str = "", db: AsyncSe
 
 @router.get("/api/tasks/{task_id}/docx/{template_name}")
 async def get_docx(task_id: int, template_name: str, user=Depends(get_current_user), db=Depends(get_db)):
+    if get_settings().preview_only:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "preview-only 模式不生成 docx")
     task = await _load_task_for_user(db, task_id, user.org_id)
     if not task:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "task not found")
@@ -164,6 +282,8 @@ async def get_docx(task_id: int, template_name: str, user=Depends(get_current_us
 
 @router.put("/api/tasks/{task_id}/docx/{template_name}")
 async def put_docx(task_id: int, template_name: str, file: UploadFile = File(...), user=Depends(get_current_user), db=Depends(get_db)):
+    if get_settings().preview_only:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "preview-only 模式不保存 docx")
     task = await _load_task_for_user(db, task_id, user.org_id)
     if not task:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "task not found")
@@ -187,11 +307,20 @@ async def refill(body: FieldUpdate, task_id: int, user=Depends(get_current_user)
     if not task:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "task not found")
     if task.status == TaskStatus.awaiting_review:
-        await regenerate_templates(task, user.org_id, body.fields, body.outcome_type)
+        await regenerate_templates(
+            task, user.org_id, user.id, body.fields, body.outcome_type
+        )
         await db.commit()
         await db.refresh(task)
         return _task_out(task)
-    await refill_templates(task, body.fields, body.order_mode, body.outcome_type, user.org_id)
+    await refill_templates(
+        task,
+        body.fields,
+        body.order_mode,
+        body.outcome_type,
+        user.org_id,
+        user.id,
+    )
     await db.commit()
     await db.refresh(task)
     return _task_out(task)
@@ -269,7 +398,12 @@ async def task_ws(websocket: WebSocket, task_id: int):
         pass
     finally:
         await tracker.unsubscribe(q)
-        await websocket.close()
+        if websocket.application_state != WebSocketState.DISCONNECTED:
+            try:
+                await websocket.close()
+            except RuntimeError:
+                # The peer may disconnect between the state check and close.
+                pass
 
 
 @router.delete("/api/tasks/{task_id}", status_code=204)

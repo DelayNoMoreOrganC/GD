@@ -6,7 +6,7 @@
         <el-card v-if="hasDoneTasks" style="margin-bottom: 16px; border: 1px solid #67c23a">
           <template #header>
             <span style="color: #67c23a; font-weight: 600">
-              <el-icon><CircleCheckFilled /></el-icon> 已完成归档
+              <el-icon><CircleCheckFilled /></el-icon> 已完成任务
             </span>
           </template>
           <div v-for="t in doneTasks" :key="t.id" style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0">
@@ -16,9 +16,9 @@
             </div>
             <div>
               <el-button size="small" type="warning" :icon="Edit" @click="goReview(t.id)">预览编辑</el-button>
-              <el-button size="small" type="primary" :icon="Download" @click="downloadTask(t.id, 'archive')">PDF</el-button>
-              <el-button size="small" :icon="Document" @click="downloadTask(t.id, 'docx')">DOCX</el-button>
-              <el-button size="small" :icon="Files" @click="downloadTask(t.id, 'zip')">ZIP</el-button>
+              <el-button v-if="t.output_pdf" size="small" type="primary" :icon="Download" @click="downloadTask(t.id, 'archive')">PDF</el-button>
+              <el-button v-if="t.has_docx" size="small" :icon="Document" @click="downloadTask(t.id, 'docx')">DOCX</el-button>
+              <el-button v-if="t.has_docx" size="small" :icon="Files" @click="downloadTask(t.id, 'zip')">ZIP</el-button>
               <el-button size="small" type="danger" :icon="Delete" @click="onDeleteTask(t)">删除</el-button>
             </div>
           </div>
@@ -79,7 +79,7 @@
                 <el-radio value="original">按原页序</el-radio>
               </el-radio-group>
             </el-form-item>
-            <el-button type="primary" :icon="MagicStick" :loading="generating" style="width: 100%" @click="onGenerate">一键生成完整归档</el-button>
+            <el-button type="primary" :icon="MagicStick" :loading="generating" style="width: 100%" @click="onGenerate">开始分析并生成预览</el-button>
           </el-form>
         </el-card>
       </el-col>

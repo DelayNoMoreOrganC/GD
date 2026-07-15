@@ -176,3 +176,29 @@ def test_apply_outcome_type_withdraw():
     fields = {"结案小结": "法院判决被告支付货款。"}
     out = co.apply_outcome_type_override(fields, "withdraw")
     assert "撤回" in out["结案小结"]
+
+
+def test_execution_not_completed_when_text_says_not_fully_performed():
+    text = (
+        "被执行人未履行完毕生效法律文书确定的义务，法院采取预查封、冻结措施，"
+        "未发现其他可供执行财产，裁定终结本次执行程序。"
+    )
+    assert co.classify_execution_outcome(text) == "zhiben"
+
+
+def test_long_judgment_reserves_space_for_real_execution_measures():
+    judgment = (
+        "被告聂彦龙应于本判决发生法律效力之日起十日内向原告某银行偿还"
+        "借款本金44496.97元、利息2717.31元、罚息1952.19元及复利270.42元。"
+    )
+    execution = (
+        "执行过程中，法院预查封被执行人共有房产份额，冻结网络支付账户，"
+        "通过网络查控未发现其他可供执行财产，并采取限制消费措施，"
+        "裁定终结本次执行程序。"
+    )
+    out = co.synthesize_outcome_narrative(judgment, execution)
+    assert out.startswith("法院判决")
+    assert "预查封" in out and "冻结" in out and "网络查控" in out
+    assert "终结本次执行" in out
+    assert "拍卖" not in out
+    assert len(out) <= co.CASE_OUTCOME_MAX_LEN

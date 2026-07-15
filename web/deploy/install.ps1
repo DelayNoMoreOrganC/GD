@@ -1,4 +1,4 @@
-# Archive V5 installer (PowerShell)
+# Archive V6 installer (PowerShell)
 # Right-click -> Run with PowerShell
 # Or: powershell -ExecutionPolicy Bypass -File install.ps1
 
@@ -16,7 +16,7 @@ function Write-Log($msg) {
 
 try {
     Set-Location $Root
-    Write-Log "=== Archive V5 install start ==="
+    Write-Log "=== Archive V6 install start ==="
     Write-Log "Root: $Root"
 
     if (-not (Test-Path (Join-Path $Backend "run.py"))) {

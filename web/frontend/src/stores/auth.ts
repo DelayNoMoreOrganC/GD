@@ -20,6 +20,14 @@ export const useAuthStore = defineStore('auth', {
     isAdmin: (state) => state.user?.role === 'admin',
   },
   actions: {
+    async register(payload: { username: string; password: string; display_name: string; org_name: string }) {
+      const { data } = await client.post('/auth/register', payload)
+      this.token = data.access_token
+      this.refreshToken = data.refresh_token
+      localStorage.setItem('v5_token', this.token)
+      localStorage.setItem('v5_refresh', this.refreshToken)
+      await this.fetchMe()
+    },
     async login(username: string, password: string) {
       const { data } = await client.post('/auth/login', { username, password })
       this.token = data.access_token

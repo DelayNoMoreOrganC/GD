@@ -116,15 +116,34 @@ def _build_case_project_name(base_fields) -> str:
         v = (base_fields.get(key) or "").strip()
         if not v:
             continue
-        if "诉" in v or "与" in v:
+        if "诉" in v or "与" in v or "被告人" in v or "涉嫌" in v:
             return v
         if len(v) >= 8 and not v.endswith("纠纷"):
             return v
 
-    ay = (base_fields.get("案由") or "").strip()
+    ay = (base_fields.get("案由") or base_fields.get("罪名") or "").strip()
+    case_type = (base_fields.get("案件类别") or "").strip()
+    if case_type == "刑事":
+        accused = _first_value(base_fields, ["被告人", "犯罪嫌疑人", "当事人"])
+        if accused and ay:
+            return f"被告人{accused}{ay}一案"
+        if accused:
+            return f"被告人{accused}一案"
+    if case_type == "非诉":
+        client = _first_value(base_fields, ["项目委托人", "委托人"])
+        matter = _first_value(base_fields, ["项目事项", "项目类型", "案由"])
+        if client and matter:
+            return f"{client}{matter}项目"
+        return matter or client
+    if case_type == "法律顾问":
+        client = _first_value(base_fields, ["顾问单位", "委托人"])
+        matter = _first_value(base_fields, ["顾问事项", "案由"]) or "常年法律顾问"
+        return f"{client}{matter}项目" if client else matter
     p1 = _first_value(base_fields, ["当事人", "委托人", "委托方", "判决书中的原告", "起诉状中的原告"])
     p2 = (base_fields.get("对方当事人") or "").strip()
     if p1 and p2 and ay:
+        if case_type == "行政":
+            return f"{p1}诉{p2}{ay}一案"
         cause = ay
         if "纠纷" not in cause:
             cause = cause + "纠纷"
@@ -140,12 +159,32 @@ def _build_case_brief(base_fields):
     brief = base_fields.get("案情简介", "").strip()
     if brief:
         return brief
+    case_type = (base_fields.get("案件类别") or "").strip()
+    if case_type == "刑事":
+        accused = _first_value(base_fields, ["被告人", "犯罪嫌疑人", "当事人"])
+        charge = _first_value(base_fields, ["罪名", "案由"])
+        client = _first_value(base_fields, ["委托人"])
+        if accused:
+            charge_text = f"涉嫌{charge}" if charge else "所涉刑事案件"
+            client_text = f"接受{client}委托，" if client else ""
+            return f"{client_text}为{accused}{charge_text}一案提供辩护或法律帮助"
+        return ""
+    if case_type == "非诉":
+        client = _first_value(base_fields, ["项目委托人", "委托人"])
+        matter = _first_value(base_fields, ["项目事项", "项目类型", "案由"])
+        if client and matter:
+            return f"{client}委托我所办理{matter}项目并提供专项法律服务"
+        return matter
+    if case_type == "法律顾问":
+        client = _first_value(base_fields, ["顾问单位", "委托人"])
+        matter = _first_value(base_fields, ["顾问事项", "案由"]) or "日常法律事务"
+        return f"为{client}提供常年法律顾问服务，主要办理{matter}" if client else matter
     party = _first_value(base_fields, ["对方当事人"])
     client = _first_value(base_fields, ["委托人"])
     target = base_fields.get("起诉标的", base_fields.get("标的额", ""))
     if party and client:
         target_part = f"，起诉标的{target}元" if target else ""
-        return f"{party}相关纠纷，{client}委托我所代理起诉{target_part}"
+        return f"{client}与{party}发生{base_fields.get('案由') or '争议'}，委托我所代理处理{target_part}"
     return ""
 
 
@@ -159,17 +198,66 @@ def _build_client_contact(base_fields):
     return " ".join(parts)
 
 
+def _adapt_fields_for_template(base_fields):
+    """Map case-specific legal roles onto legacy five-form placeholders."""
+    fields = dict(base_fields or {})
+    case_type = (fields.get("案件类别") or "").strip()
+
+    if case_type == "刑事":
+        party = _first_value(fields, ["被告人", "犯罪嫌疑人", "当事人"])
+        opponent = _first_value(fields, ["公诉机关", "被害人", "对方当事人"])
+        lawyer = _first_value(fields, ["辩护人", "承办律师", "代理律师"])
+        if party:
+            fields.setdefault("当事人", party)
+            fields.setdefault("判决书中的原告", party)
+            fields.setdefault("起诉状中的原告", party)
+        if opponent:
+            fields.setdefault("对方当事人", opponent)
+            fields.setdefault("判决书中的被告", opponent)
+            fields.setdefault("起诉状中的被告", opponent)
+        if lawyer:
+            fields.setdefault("承办律师", lawyer)
+        if fields.get("罪名"):
+            fields.setdefault("案由", fields["罪名"])
+        if fields.get("审判法院"):
+            fields.setdefault("审理法院", fields["审判法院"])
+    elif case_type == "行政":
+        party = _first_value(fields, ["行政相对人", "当事人", "原告"])
+        opponent = _first_value(fields, ["行政机关", "被诉行政机关", "对方当事人"])
+        if party:
+            fields.setdefault("当事人", party)
+            fields.setdefault("判决书中的原告", party)
+        if opponent:
+            fields.setdefault("对方当事人", opponent)
+            fields.setdefault("判决书中的被告", opponent)
+    elif case_type in ("非诉", "法律顾问"):
+        client = _first_value(fields, ["项目委托人", "顾问单位", "委托人"])
+        matter = _first_value(fields, ["项目事项", "顾问事项", "案由"])
+        result = _first_value(fields, ["服务成果", "结案小结", "审（办）结果"])
+        if client:
+            fields.setdefault("委托人", client)
+            fields.setdefault("当事人", client)
+            fields.setdefault("判决书中的原告", client)
+        if matter:
+            fields.setdefault("案由", matter)
+        if result:
+            fields.setdefault("结案小结", result)
+            fields.setdefault("审（办）结果", result)
+
+    return fields
+
+
 def expand_fields_for_template(template_name, base_fields):
     """
     把 LLM 通用字段展开为某模板内所有需要替换的键值对。
     键为占位符内容（不含【】），值为替换文本。
     """
+    base_fields = _adapt_fields_for_template(base_fields)
+
     if template_name == "立案审批表":
         from lian_approval_fill import expand_lian_fields
 
         return expand_lian_fields(base_fields)
-
-    base_fields = dict(base_fields or {})
 
     # 【修复第12轮迭代】送达材料清单fallback：确保承办律师字段有值
     # 在映射开始前执行，确保后续映射能使用到完整数据

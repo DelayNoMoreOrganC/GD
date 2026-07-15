@@ -1,7 +1,7 @@
 @echo off
 REM ============================================
-REM  案件归档系统 V5 - 局域网部署包生成脚本
-REM  在开发机上运行，生成 v5_deploy.zip
+REM  案件归档系统 V6 - Windows 部署包生成脚本
+REM  在开发机上运行，生成 v6_deploy.zip
 REM ============================================
 chcp 65001 >nul
 setlocal EnableDelayedExpansion
@@ -9,11 +9,11 @@ setlocal EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 set "WEB_DIR=%SCRIPT_DIR%.."
 set "GD_ROOT=%WEB_DIR%\.."
-set "TMPDIR=%TEMP%\v5_deploy_pkg"
-set "OUTZIP=%TEMP%\v5_deploy.zip"
+set "TMPDIR=%TEMP%\v6_deploy_pkg"
+set "OUTZIP=%TEMP%\v6_deploy.zip"
 
 echo.
-echo === 案件归档 V5 部署包打包 ===
+echo === 案件归档 V6 部署包打包 ===
 echo 项目根目录: %GD_ROOT%
 echo.
 
@@ -59,7 +59,7 @@ mkdir "%TMPDIR%\app\prompts"
 REM ---------- 3. 复制文件 ----------
 echo [3/4] 复制运行文件...
 
-REM V5 Web（排除运行时与缓存）
+REM V6 Web（排除运行时与缓存）
 robocopy "%WEB_DIR%\backend" "%TMPDIR%\app\web\backend" /E /XD __pycache__ .pytest_cache outputs /XF *.db /NFL /NDL /NJH /NJS /nc /ns /np >nul
 robocopy "%WEB_DIR%\deploy" "%TMPDIR%\app\web\deploy" /E /NFL /NDL /NJH /NJS /nc /ns /np >nul
 robocopy "%WEB_DIR%\frontend\dist" "%TMPDIR%\app\web\frontend\dist" /E /NFL /NDL /NJH /NJS /nc /ns /np >nul
@@ -88,7 +88,6 @@ copy /Y "%SCRIPT_DIR%install.ps1" "%TMPDIR%\install.ps1" >nul
 copy /Y "%SCRIPT_DIR%打开安装窗口.bat" "%TMPDIR%\打开安装窗口.bat" >nul
 copy /Y "%SCRIPT_DIR%start_server.bat" "%TMPDIR%\start_server.bat" >nul
 copy /Y "%SCRIPT_DIR%install_service.bat" "%TMPDIR%\install_service.bat" >nul
-copy /Y "%SCRIPT_DIR%手动安装说明.txt" "%TMPDIR%\手动安装说明.txt" >nul
 copy /Y "%SCRIPT_DIR%DEPLOY_README.md" "%TMPDIR%\部署说明.md" >nul
 
 REM ---------- 4. 压缩 ----------
@@ -112,8 +111,8 @@ echo  大小: 约 !ZIPSIZE_MB! MB
 echo ========================================
 echo.
 echo 目标机使用步骤:
-echo   1. 复制 v5_deploy.zip 到目标 Windows 电脑
-echo   2. 解压到任意目录，例如 D:\ArchiveV5
+echo   1. 复制 v6_deploy.zip 到目标 Windows 电脑
+echo   2. 解压到任意目录，例如 D:\ArchiveV6
 echo   3. 首次运行 install.bat
 echo   4. 以后日常启动用 start_server.bat
 echo.

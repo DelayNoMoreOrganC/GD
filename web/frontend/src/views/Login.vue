@@ -10,6 +10,7 @@
           <el-input v-model="form.password" type="password" placeholder="请输入密码" :prefix-icon="Lock" show-password @keyup.enter="onLogin" />
         </el-form-item>
         <el-button type="primary" :loading="loading" style="width: 100%" @click="onLogin">登录</el-button>
+        <div class="register-link">还没有账号？<router-link to="/register">立即注册</router-link></div>
       </el-form>
     </el-card>
   </div>
@@ -48,4 +49,5 @@ async function onLogin() {
 .login-wrap { display: flex; align-items: center; justify-content: center; height: 100vh; background: linear-gradient(135deg, #1d2129 0%, #2a3548 100%); }
 .login-card { width: 380px; }
 .login-title { text-align: center; margin-bottom: 24px; color: #1d2129; }
+.register-link { margin-top: 16px; text-align: center; color: #606266; font-size: 14px; }
 </style>

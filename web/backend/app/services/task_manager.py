@@ -5,7 +5,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 
-logger = logging.getLogger("v5.task")
+logger = logging.getLogger("v6.task")
 
 
 @dataclass
